@@ -383,6 +383,13 @@ def translate(request: Request, req: TranslateRequest, api_key: str = Depends(ge
     for cid, latin_chunk in pairs:
         if cid == ":":
             sequence.append(WORD_SEPARATOR)
+        elif cid.isdigit():
+            sequence.append({
+                "class_id": cid,
+                "latin": latin_chunk,
+                "glyph_ref": cid,
+                "codepoint": f"U+{ord(cid):04X}",
+            })
         else:
             meta = bundle.class_meta.get(cid, {})
             sequence.append({

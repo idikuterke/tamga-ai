@@ -245,7 +245,11 @@ class SpellingEngine:
             if wi > 0:
                 out.append((":", None))
             self._maybe_warn_unverified(w)
-            out.extend(self._letter_by_letter_word(w))
+            if w.isdigit():
+                # Sayı passthrough (TODO: Rakam sırası düz olarak korunuyor)
+                out.extend((digit, digit) for digit in w)
+            else:
+                out.extend(self._letter_by_letter_word(w))
         return out
 
     def _letter_by_letter_word(self, raw_word):
@@ -287,7 +291,10 @@ class SpellingEngine:
             if wi > 0:
                 out.append((":", None))
             self._maybe_warn_unverified(w)
-            if w in self.exception_dictionary:
+            if w.isdigit():
+                # Sayı passthrough (TODO: Rakam sırası düz olarak korunuyor)
+                out.extend((digit, digit) for digit in w)
+            elif w in self.exception_dictionary:
                 out.extend((cid, None) for cid in self.exception_dictionary[w])
             else:
                 out.extend(self._expected_sequence_word(w))

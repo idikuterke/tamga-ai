@@ -93,6 +93,27 @@
       <button id="translateBtn">Çevir</button>
     </div>
     <div id="outputControls">
+      <!-- Font seçici - Diğer fontlar lisans netleşince eklenecek. -->
+      <label>Font:
+        <select id="fontSelect">
+          <option value='"Noto Sans Old Turkic"'>Noto Sans Old Turkic</option>
+        </select>
+      </label>
+
+      <!-- Biçimlendirme araç çubuğu -->
+      <div style="display: flex; gap: 4px; align-items: center; border-left: 1px solid #ccc; border-right: 1px solid #ccc; padding: 0 10px; margin: 0 10px;">
+        <button type="button" id="btnBold" style="font-weight:bold; width:30px; height:28px; border:1px solid #ccc; background:#fff; border-radius:4px; cursor:pointer;">B</button>
+        <button type="button" id="btnItalic" style="font-style:italic; width:30px; height:28px; border:1px solid #ccc; background:#fff; border-radius:4px; cursor:pointer;">I</button>
+        <button type="button" id="btnUnderline" style="text-decoration:underline; width:30px; height:28px; border:1px solid #ccc; background:#fff; border-radius:4px; cursor:pointer;">U</button>
+        
+        <select id="alignSelect" style="margin-left: 6px; padding: 4px 8px; border-radius: 6px; border: 1px solid #ccc;">
+          <option value="right">Sağa Hizala (RTL)</option>
+          <option value="left">Sola Hizala</option>
+          <option value="center">Ortala</option>
+          <option value="justify">İki Yana Yasla</option>
+        </select>
+      </div>
+
       <label>Boyut: <input type="range" id="fontSizeSlider" min="32" max="120" value="42"> <span id="fontSizeLabel">42px</span></label>
       <label>Renk: <input type="color" id="colorPicker" value="#1a1a1a"></label>
       <label>Stil:
@@ -133,6 +154,15 @@
     const colorPicker = document.getElementById('colorPicker');
     const styleSelect = document.getElementById('styleSelect');
     const downloadPngBtn = document.getElementById('downloadPngBtn');
+    const btnBold = document.getElementById('btnBold');
+    const btnItalic = document.getElementById('btnItalic');
+    const btnUnderline = document.getElementById('btnUnderline');
+    const alignSelect = document.getElementById('alignSelect');
+    const fontSelect = document.getElementById('fontSelect');
+
+    let isBold = false;
+    let isItalic = false;
+    let isUnderline = false;
 
     let mode = 'image'; // 'image' | 'single' | 'translate'
     let translateDebounceTimer = null;
@@ -148,16 +178,49 @@
     colorPicker.addEventListener('input', applyOutputStyle);
     styleSelect.addEventListener('change', applyOutputStyle);
     downloadPngBtn.addEventListener('click', downloadOutputAsPng);
+    btnBold.addEventListener('click', () => {
+      isBold = !isBold;
+      btnBold.style.background = isBold ? '#ddd' : '#fff';
+      applyOutputStyle();
+    });
+    btnItalic.addEventListener('click', () => {
+      isItalic = !isItalic;
+      btnItalic.style.background = isItalic ? '#ddd' : '#fff';
+      applyOutputStyle();
+    });
+    btnUnderline.addEventListener('click', () => {
+      isUnderline = !isUnderline;
+      btnUnderline.style.background = isUnderline ? '#ddd' : '#fff';
+      applyOutputStyle();
+    });
+    alignSelect.addEventListener('change', applyOutputStyle);
+    fontSelect.addEventListener('change', applyOutputStyle);
 
     function applyOutputStyle() {
       const el = document.querySelector('.gokturkce-output');
       if (!el) return;
+      
       const size = fontSizeSlider.value;
       fontSizeLabel.textContent = size + 'px';
       el.style.fontSize = size + 'px';
+      
+      // Font ailesi ayarla
+      el.style.fontFamily = fontSelect.value + ', sans-serif';
+      
+      // Kalınlık ayarla
+      el.style.fontWeight = isBold ? 'bold' : 'normal';
+      
+      // İtalik ayarla
+      el.style.fontStyle = isItalic ? 'italic' : 'normal';
+      
+      // Altı çizili ayarla
+      el.style.textDecoration = isUnderline ? 'underline' : 'none';
+      
+      // Hizalama ayarla
+      el.style.textAlign = alignSelect.value;
+      
+      // Sınıflar ve renk ayarla
       el.className = 'gokturkce-output' + (styleSelect.value === 'normal' ? '' : ' style-' + styleSelect.value);
-      // "Altın Kabartma" gradient (background-clip:text) kullanıyor; düz renk
-      // uygulanırsa gradient'i ezer, bu yüzden o stilde renk seçici atlanır.
       el.style.color = styleSelect.value === 'gold' ? '' : colorPicker.value;
     }
 
@@ -247,7 +310,10 @@
 
       const size = parseInt(fontSizeSlider.value, 10);
       const styleName = styleSelect.value;
-      const fontSpec = `${size}px "Noto Sans Old Turkic"`;
+      
+      const stylePart = isItalic ? 'italic' : '';
+      const weightPart = isBold ? 'bold' : '';
+      const fontSpec = `${stylePart} ${weightPart} ${size}px ${fontSelect.value}`.trim().replace(/\s+/g, ' ');
 
       // Font gerçekten yüklenmeden çizilirse tofu/yanlış glyph çıkabilir.
       await document.fonts.load(fontSpec, text);
@@ -268,10 +334,44 @@
 
       ctx.font = fontSpec;
       ctx.textBaseline = 'middle';
-      ctx.textAlign = 'right'; // RTL hissi için sağa hizala
-      const x = canvas.width - padding;
+      
+      const align = alignSelect.value;
+      let x;
+      if (align === 'left') {
+        ctx.textAlign = 'left';
+        x = padding;
+      } else if (align === 'center') {
+        ctx.textAlign = 'center';
+        x = canvas.width / 2;
+      } else {
+        ctx.textAlign = 'right';
+        x = canvas.width - padding;
+      }
       const y = canvas.height / 2;
       drawPngStyledText(ctx, text, x, y, styleName, colorPicker.value);
+
+      if (isUnderline) {
+        ctx.save();
+        ctx.strokeStyle = styleName === 'gold' ? '#e0a83e' : colorPicker.value;
+        ctx.lineWidth = Math.max(1, size / 16);
+        ctx.beginPath();
+        let startX, endX;
+        const lineY = y + size * 0.6;
+        if (ctx.textAlign === 'left') {
+          startX = x;
+          endX = x + textWidth;
+        } else if (ctx.textAlign === 'center') {
+          startX = x - textWidth / 2;
+          endX = x + textWidth / 2;
+        } else {
+          startX = x - textWidth;
+          endX = x;
+        }
+        ctx.moveTo(startX, lineY);
+        ctx.lineTo(endX, lineY);
+        ctx.stroke();
+        ctx.restore();
+      }
 
       canvas.toBlob(blob => {
         const url = URL.createObjectURL(blob);
