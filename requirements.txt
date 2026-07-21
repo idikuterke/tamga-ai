@@ -1,0 +1,11 @@
+fastapi==0.139.2
+uvicorn==0.51.0
+python-multipart==0.0.32
+torch==2.13.0
+torchvision==0.28.0
+pillow==12.2.0
+numpy==2.4.6
+scipy==1.18.0
+fonttools==4.63.0
+requests==2.34.2
+slowapi==0.1.10

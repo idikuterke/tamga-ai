@@ -1,0 +1,18 @@
+# Security sensitive configuration files
+pipeline/product/api_keys.json
+pipeline/product/usage_log.jsonl
+
+# Large data and model assets
+pipeline/model/
+pipeline/product/model/
+pipeline/data/
+
+# Licensing/copyright sensitive font files
+pipeline/fonts/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Environment files
+.env

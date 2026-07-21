@@ -1,0 +1,29 @@
+{
+  "_howto": "Her fontu buraya ekle. 'coverage' = orhun_only | orhun_yenisei. 'style_tag' render sırasında dataset içinde stil çeşitliliğini işaretlemek için kullanılır (ör. dataset'i stile göre filtrelemek istersen).",
+  "fonts": [
+    { "name": "DamgaLatin", "path": "fonts/DamgaLatin.ttf", "coverage": "orhun_only", "style_tag": "teaching_labeled" },
+    { "name": "Damga", "path": "fonts/damgaagir.ttf", "coverage": "orhun_only", "style_tag": "standard" },
+    { "name": "BilgeKagan", "path": "fonts/bilgekagan.ttf", "coverage": "orhun_yenisei", "style_tag": "standard_full" },
+    { "name": "Bala", "path": "fonts/bala-g.ttf", "coverage": "orhun_only", "style_tag": "standard" },
+    { "name": "Firca", "path": "fonts/firca.ttf", "coverage": "orhun_only", "style_tag": "brush" },
+    { "name": "Gezer", "path": "fonts/gezer.ttf", "coverage": "orhun_only", "style_tag": "standard" },
+    { "name": "Karluk", "path": "fonts/karluk.ttf", "coverage": "orhun_only", "style_tag": "standard" },
+    { "name": "Kazak", "path": "fonts/kazak.ttf", "coverage": "orhun_only", "style_tag": "standard" },
+    { "name": "Kece", "path": "fonts/kece.ttf", "coverage": "orhun_only", "style_tag": "standard" },
+    { "name": "Kultigin", "path": "fonts/kultigin.ttf", "coverage": "orhun_yenisei", "style_tag": "standard_full" },
+    { "name": "Ozbek", "path": "fonts/ozbek.ttf", "coverage": "orhun_only", "style_tag": "standard" },
+    { "name": "Tonyukuk", "path": "fonts/tonyukuk.ttf", "coverage": "orhun_yenisei", "style_tag": "standard_full" },
+    { "name": "Oguz", "path": "fonts/oguz.ttf", "coverage": "orhun_only", "style_tag": "standard" },
+    { "name": "GokturkKalem", "path": "fonts/gokturkkalemkalin.ttf", "coverage": "orhun_only", "style_tag": "bitig_cursive" },
+    { "name": "Tatar", "path": "fonts/tatar.ttf", "coverage": "orhun_only", "style_tag": "standard" },
+    { "name": "Baskurt", "path": "fonts/baskurt.ttf", "coverage": "orhun_only", "style_tag": "standard" },
+    { "name": "TurkBitig", "path": "fonts/turkbitig.ttf", "coverage": "orhun_yenisei", "style_tag": "standard_full" },
+    { "name": "GokturkKurgu", "path": "fonts/gokturkkurgu.ttf", "coverage": "orhun_yenisei", "style_tag": "standard_full" },
+    { "name": "Yaksi", "path": "fonts/yaksi.ttf", "coverage": "orhun_yenisei", "style_tag": "standard_full" },
+    { "name": "Gokturk_turkorgau", "path": "fonts/Gokturk.ttf", "coverage": "orhun_only", "style_tag": "thin_clear" },
+    { "name": "Orkun_turkorgau", "path": "fonts/Orkun.ttf", "coverage": "orhun_only", "style_tag": "bold_sharp" },
+    { "name": "Firca_turkorgau", "path": "fonts/Firca2.ttf", "coverage": "orhun_only", "style_tag": "brush" },
+    { "name": "Kokturkce_turkorgau", "path": "fonts/Kokturkce.ttf", "coverage": "orhun_only", "style_tag": "soft_calligraphic" },
+    { "name": "TugrulCavdar", "path": "fonts/KokTuruk2004UnicodeTugrulCavdar.ttf", "coverage": "orhun_only", "style_tag": "authority_reference" }
+  ]
+}
