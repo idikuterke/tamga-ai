@@ -328,13 +328,17 @@
       await document.fonts.load(fontSpec, text);
       await document.fonts.ready;
 
+      // Karakterleri ayır (surrogate çiftleri koru)
+      const chars = [...text];
+      const gap = 20 + letterSpacing; // Güvenli segmentasyon boşluğu (en az 20px) + estetik boşluk
+
       const measureCanvas = document.createElement('canvas');
       const measureCtx = measureCanvas.getContext('2d');
       measureCtx.font = fontSpec;
-      if ('letterSpacing' in measureCtx) {
-        measureCtx.letterSpacing = letterSpacing + 'px';
-      }
-      const textWidth = measureCtx.measureText(text).width;
+      
+      // Her karakteri tek tek ölç
+      const charWidths = chars.map(c => measureCtx.measureText(c).width);
+      const textWidth = charWidths.reduce((sum, w) => sum + w, 0) + gap * (chars.length - 1);
 
       const padding = size;
       const canvas = document.createElement('canvas');
@@ -345,25 +349,28 @@
       drawPngBackground(ctx, canvas.width, canvas.height, styleName);
 
       ctx.font = fontSpec;
-      if ('letterSpacing' in ctx) {
-        ctx.letterSpacing = letterSpacing + 'px';
-      }
       ctx.textBaseline = 'middle';
-      
+      ctx.textAlign = 'right'; // Karakter çizim döngüsü için sağa yaslama kullanıyoruz
+
       const align = alignSelect.value;
-      let x;
+      let xStart;
       if (align === 'left') {
-        ctx.textAlign = 'left';
-        x = padding;
+        xStart = padding + textWidth;
       } else if (align === 'center') {
-        ctx.textAlign = 'center';
-        x = canvas.width / 2;
+        xStart = canvas.width / 2 + textWidth / 2;
       } else {
-        ctx.textAlign = 'right';
-        x = canvas.width - padding;
+        xStart = canvas.width - padding;
       }
       const y = canvas.height / 2;
-      drawPngStyledText(ctx, text, x, y, styleName, colorPicker.value);
+
+      // Karakterleri sağdan sola doğru tek tek çiz (Göktürkçe RTL)
+      let xPos = xStart;
+      for (let i = 0; i < chars.length; i++) {
+        const char = chars[i];
+        const charWidth = charWidths[i];
+        drawPngStyledText(ctx, char, xPos, y, styleName, colorPicker.value);
+        xPos -= (charWidth + gap);
+      }
 
       if (isUnderline) {
         ctx.save();
@@ -372,15 +379,15 @@
         ctx.beginPath();
         let startX, endX;
         const lineY = y + size * 0.6;
-        if (ctx.textAlign === 'left') {
-          startX = x;
-          endX = x + textWidth;
-        } else if (ctx.textAlign === 'center') {
-          startX = x - textWidth / 2;
-          endX = x + textWidth / 2;
+        if (align === 'left') {
+          startX = padding;
+          endX = padding + textWidth;
+        } else if (align === 'center') {
+          startX = canvas.width / 2 - textWidth / 2;
+          endX = canvas.width / 2 + textWidth / 2;
         } else {
-          startX = x - textWidth;
-          endX = x;
+          startX = canvas.width - padding - textWidth;
+          endX = canvas.width - padding;
         }
         ctx.moveTo(startX, lineY);
         ctx.lineTo(endX, lineY);
