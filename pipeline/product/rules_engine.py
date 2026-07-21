@@ -245,11 +245,7 @@ class SpellingEngine:
             if wi > 0:
                 out.append((":", None))
             self._maybe_warn_unverified(w)
-            if w.isdigit():
-                # Sayı passthrough (TODO: Rakam sırası düz olarak korunuyor)
-                out.extend((digit, digit) for digit in w)
-            else:
-                out.extend(self._letter_by_letter_word(w))
+            out.extend(self._letter_by_letter_word(w))
         return out
 
     def _letter_by_letter_word(self, raw_word):
@@ -268,7 +264,11 @@ class SpellingEngine:
             elif ch in self.polar_consonant_letters:
                 harmony = self._nearest_harmony(word, vowel_positions, i)
                 output.append((self.polar_consonant_map[(ch, harmony)], ch))
-            # tanınmayan karakter (rakam, noktalama vb.) -> sessizce atla
+            elif ch == ":":
+                output.append(("literal_colon", ch))
+            else:
+                # Alfabede ses karşılığı olmayan her karakter (rakam, noktalama, sembol) olduğu gibi geçirilir
+                output.append((ch, ch))
         return output
 
     # ---------- ana motor ("geleneksel" mod) ----------
@@ -291,10 +291,7 @@ class SpellingEngine:
             if wi > 0:
                 out.append((":", None))
             self._maybe_warn_unverified(w)
-            if w.isdigit():
-                # Sayı passthrough (TODO: Rakam sırası düz olarak korunuyor)
-                out.extend((digit, digit) for digit in w)
-            elif w in self.exception_dictionary:
+            if w in self.exception_dictionary:
                 out.extend((cid, None) for cid in self.exception_dictionary[w])
             else:
                 out.extend(self._expected_sequence_word(w))
@@ -384,13 +381,17 @@ class SpellingEngine:
                 i += 1
                 continue
 
-            # --- ünsüz ---
+            # --- ünsüz veya noktalama / sembol geçişi ---
             if ch in self.neutral_consonant_map:
                 output.append((self.neutral_consonant_map[ch], ch))
             elif ch in self.polar_consonant_letters:
                 harmony = self._nearest_harmony(word, vowel_positions, i)
                 output.append((self.polar_consonant_map[(ch, harmony)], ch))
-            # tanınmayan karakter (rakam, noktalama vb.) -> sessizce atla
+            elif ch == ":":
+                output.append(("literal_colon", ch))
+            else:
+                # Alfabede ses karşılığı olmayan her karakter (rakam, noktalama, sembol) olduğu gibi geçirilir
+                output.append((ch, ch))
             i += 1
 
         return output

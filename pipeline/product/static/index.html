@@ -114,6 +114,7 @@
         </select>
       </div>
 
+      <label>Harf Boşluğu: <input type="range" id="letterSpacingSlider" min="-2" max="20" value="0"> <span id="letterSpacingLabel">0px</span></label>
       <label>Boyut: <input type="range" id="fontSizeSlider" min="32" max="120" value="42"> <span id="fontSizeLabel">42px</span></label>
       <label>Renk: <input type="color" id="colorPicker" value="#1a1a1a"></label>
       <label>Stil:
@@ -159,6 +160,8 @@
     const btnUnderline = document.getElementById('btnUnderline');
     const alignSelect = document.getElementById('alignSelect');
     const fontSelect = document.getElementById('fontSelect');
+    const letterSpacingSlider = document.getElementById('letterSpacingSlider');
+    const letterSpacingLabel = document.getElementById('letterSpacingLabel');
 
     let isBold = false;
     let isItalic = false;
@@ -195,6 +198,7 @@
     });
     alignSelect.addEventListener('change', applyOutputStyle);
     fontSelect.addEventListener('change', applyOutputStyle);
+    letterSpacingSlider.addEventListener('input', applyOutputStyle);
 
     function applyOutputStyle() {
       const el = document.querySelector('.gokturkce-output');
@@ -203,6 +207,10 @@
       const size = fontSizeSlider.value;
       fontSizeLabel.textContent = size + 'px';
       el.style.fontSize = size + 'px';
+      
+      const spacing = letterSpacingSlider.value;
+      letterSpacingLabel.textContent = spacing + 'px';
+      el.style.letterSpacing = spacing + 'px';
       
       // Font ailesi ayarla
       el.style.fontFamily = fontSelect.value + ', sans-serif';
@@ -310,6 +318,7 @@
 
       const size = parseInt(fontSizeSlider.value, 10);
       const styleName = styleSelect.value;
+      const letterSpacing = parseInt(letterSpacingSlider.value, 10);
       
       const stylePart = isItalic ? 'italic' : '';
       const weightPart = isBold ? 'bold' : '';
@@ -322,6 +331,9 @@
       const measureCanvas = document.createElement('canvas');
       const measureCtx = measureCanvas.getContext('2d');
       measureCtx.font = fontSpec;
+      if ('letterSpacing' in measureCtx) {
+        measureCtx.letterSpacing = letterSpacing + 'px';
+      }
       const textWidth = measureCtx.measureText(text).width;
 
       const padding = size;
@@ -333,6 +345,9 @@
       drawPngBackground(ctx, canvas.width, canvas.height, styleName);
 
       ctx.font = fontSpec;
+      if ('letterSpacing' in ctx) {
+        ctx.letterSpacing = letterSpacing + 'px';
+      }
       ctx.textBaseline = 'middle';
       
       const align = alignSelect.value;

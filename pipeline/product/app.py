@@ -383,20 +383,29 @@ def translate(request: Request, req: TranslateRequest, api_key: str = Depends(ge
     for cid, latin_chunk in pairs:
         if cid == ":":
             sequence.append(WORD_SEPARATOR)
-        elif cid.isdigit():
+        elif cid == "literal_colon":
             sequence.append({
-                "class_id": cid,
-                "latin": latin_chunk,
-                "glyph_ref": cid,
-                "codepoint": f"U+{ord(cid):04X}",
+                "class_id": "literal_colon",
+                "latin": ":",
+                "glyph_ref": ":",
+                "codepoint": "U+003A",
             })
-        else:
-            meta = bundle.class_meta.get(cid, {})
+        elif cid in bundle.class_meta:
+            meta = bundle.class_meta[cid]
             sequence.append({
                 "class_id": cid,
                 "latin": latin_chunk,
                 "glyph_ref": (meta.get("glyph_ref") or {}).get("core_orhun"),
                 "codepoint": (meta.get("codepoints") or {}).get("core_orhun"),
+            })
+        else:
+            # Rakam, noktalama, sembol veya bilinmeyen karakter -> olduğu gibi geçir
+            cp = f"U+{ord(cid[0]):04X}" if cid else "—"
+            sequence.append({
+                "class_id": cid,
+                "latin": latin_chunk,
+                "glyph_ref": cid,
+                "codepoint": cp,
             })
 
     return {
