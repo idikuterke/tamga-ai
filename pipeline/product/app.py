@@ -24,8 +24,8 @@ from PIL import Image
 
 from typing import List
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, Security
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends, Security
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security.api_key import APIKeyHeader
@@ -34,7 +34,12 @@ from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 
-from rules_engine import OrthographyRuleEngine, SpellingEngine
+from rules_engine import OrthographyRuleEngine, SpellingEngine, SpellingDecoder
+from render import render as render_img, STYLES
+from video import VideoRenderer
+from compositor import composite_text
+
+video_renderer = VideoRenderer()
 
 # 07_segment_word.py, product/ klasörünün bir üstünde (pipeline/) duruyor.
 # Modül adı rakamla başladığı için normal import çalışmaz, dosya yolundan yükle.
@@ -44,24 +49,19 @@ _spec = importlib.util.spec_from_file_location("segment_mod", _seg_path)
 segment_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(segment_mod)
 
-MODEL_DIR = Path("./model")
-# NOT (2026-07-21): burası "../gokturk_labels_v1_locked.json" idi ve YANLIŞLIKLA
-# pipeline/'deki ESKİ, unutulmuş bir kopyaya işaret ediyordu (pipeline/product/
-# -> pipeline/ -> orada da bir şema kopyası var, tarih: 2026-07-20 00:17,
-# ko/ku/kö/kü ve changelog eklemelerinden ÖNCEKİ hali). Proje kökündeki
-# GÜNCEL/DOĞRU dosya iki seviye yukarıda. Bu yanlış yol yüzünden sunucu
-# haftalarca (bu oturum boyunca) syllable_ok/syllable_oek'in ko/ku/kö/kü
-# okunuşlarını asla göremedi — "korkınç" gibi kelimelerde ligatür yerine
-# düz harf üretiyordu, CLI testleri (doğru dosyayı elle veren) ise hep
-# doğru sonuç veriyordu. Kök neden buydu, kod mantığında hata yoktu.
-SCHEMA_PATH = Path("../../gokturk_labels_v1_locked.json")
-STATIC_DIR = Path("./static")
+PRODUCT_DIR = Path(__file__).resolve().parent
+MODEL_DIR = PRODUCT_DIR / "model" if (PRODUCT_DIR / "model" / "idx_to_class.json").exists() else PRODUCT_DIR.parent / "model"
+# NOT (2026-07-21): SCHEMA_PATH projenin kökündeki kilitli şemayı işaret etmeli
+SCHEMA_PATH = (PRODUCT_DIR / "../../gokturk_labels_v1_locked.json").resolve()
+STATIC_DIR = PRODUCT_DIR / "static"
 
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 RATE_LIMIT_MINUTE = 30
 RATE_LIMIT_DAY = 1000
+
+ENABLE_COMPOSITOR_TAB = True
 
 def get_api_key_from_request(request: Request) -> str:
     return request.headers.get(API_KEY_NAME, "anonymous")
@@ -160,9 +160,31 @@ class ModelBundle:
             schema = json.load(f)
         self.class_meta = {c["id"]: c for c in schema["classes"]}
 
+        model_file = (MODEL_DIR / "best_model.pt").resolve()
+        mtime_str = datetime.fromtimestamp(model_file.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        file_size_mb = model_file.stat().st_size / (1024 * 1024)
+
         self.model = build_model(self.cfg["num_classes"])
-        self.model.load_state_dict(torch.load(MODEL_DIR / "best_model.pt", map_location="cpu"))
+        self.model.load_state_dict(torch.load(model_file, map_location="cpu"))
         self.model.eval()
+
+        sys.stderr.write(f"\n==================================================\n")
+        sys.stderr.write(f"YUKLENEN MODEL BILGISI:\n")
+        sys.stderr.write(f"   Dosya Yolu           : {model_file}\n")
+        sys.stderr.write(f"   Son Degistirilme     : {mtime_str}\n")
+        sys.stderr.write(f"   Dosya Boyutu         : {file_size_mb:.2f} MB\n")
+        sys.stderr.write(f"   Sinif Sayisi         : {self.cfg['num_classes']} sinif\n")
+        sys.stderr.write(f"   Guven Esigi (Conf)   : {self.cfg['conf_threshold']}\n")
+        sys.stderr.write(f"==================================================\n\n")
+        sys.stderr.flush()
+
+        self.model_info = {
+            "model_path": str(model_file),
+            "last_modified": mtime_str,
+            "file_size_mb": round(file_size_mb, 2),
+            "num_classes": self.cfg["num_classes"],
+            "conf_threshold": self.cfg["conf_threshold"]
+        }
 
         self.tf = transforms.Compose([
             transforms.Resize((self.cfg["image_size"], self.cfg["image_size"])),
@@ -203,25 +225,95 @@ class ModelBundle:
 bundle = None  # lazy-load, sunucu açılışında yüklenir
 rule_engine = None
 spelling_engine = None
+spelling_decoder = None
+class_meta_map = {}
 
-# Söz ayracı ':' bir model sınıfı değil, yapısal bir işaret (SpellingEngine
-# çıktısında literal ":" olarak temsil edilir) — Unicode karşılığı Old
-# Turkic word separator U+205A.
 WORD_SEPARATOR = {"class_id": ":", "glyph_ref": "⁚", "codepoint": "U+205A"}
 
 
 @app.on_event("startup")
 def load_model():
-    global bundle, rule_engine, spelling_engine
-    bundle = ModelBundle()
+    global bundle, rule_engine, spelling_engine, spelling_decoder, class_meta_map
+    try:
+        with open(SCHEMA_PATH, encoding="utf-8") as f:
+            schema = json.load(f)
+        class_meta_map = {c["id"]: c for c in schema["classes"]}
+    except Exception as e:
+        sys.stderr.write(f"Şema yüklenemedi: {e}\n")
+        class_meta_map = {}
+
+    try:
+        bundle = ModelBundle()
+        sys.stderr.write(f"Model Yüklendi: {bundle.model_info['model_path']}\n")
+    except Exception as e:
+        sys.stderr.write(f"Model Yüklenemedi (render-only modunda olabilir): {e}\n")
+        bundle = None
+        
     rule_engine = OrthographyRuleEngine(SCHEMA_PATH)
     spelling_engine = SpellingEngine(SCHEMA_PATH)
-    print(f"Model yüklendi: {len(bundle.idx_to_class)} sınıf, conf_threshold={bundle.cfg['conf_threshold']}")
+    spelling_decoder = SpellingDecoder(SCHEMA_PATH)
+    sys.stderr.write("Sunucu Baslatildi.\n")
+    sys.stderr.flush()
+
+@app.get("/api/model_info")
+def get_model_info():
+    if bundle is None:
+        raise HTTPException(status_code=503, detail="Model bundle not loaded")
+    return bundle.model_info
 
 
 class TranslateRequest(BaseModel):
     text: str
     mode: str = "geleneksel"  # "geleneksel" | "modern"
+
+
+class RenderRequest(BaseModel):
+    text: str
+    style: str = "plain"
+    size: int = 512
+    degradation: float = 0.0
+    text_color: str | None = None
+    transparent_bg: bool = False
+    texture: str | None = None
+    texture_var: str | None = None
+    stamp_var: str | None = None
+    light_direction: tuple[int, int] | None = None
+    font_variant: str | None = "auto"
+
+
+class RenderVideoRequest(BaseModel):
+    text: str
+    style: str = "plain"
+    motion: str = "parallax"
+    duration: int = 5
+    size: int = 512
+    degradation: float = 0.0
+    text_color: str | None = None
+    transparent_bg: bool = False
+    texture: str | None = None
+    texture_var: str | None = None
+    stamp_var: str | None = None
+    light_direction: tuple[int, int] | None = None
+    font_variant: str | None = "auto"
+
+
+class DecodeTextRequest(BaseModel):
+    text: str
+    mode: str = "auto"  # "auto" | "geleneksel" | "modern"
+
+
+@app.post("/decode_text")
+@limiter.limit(f"{RATE_LIMIT_MINUTE}/minute; {RATE_LIMIT_DAY}/day")
+async def decode_text(request: Request, req: DecodeTextRequest, api_key: str = Depends(get_api_key)):
+    """
+    Kullanıcı doğrudan Göktürkçe Unicode metin yapıştırıp okutur.
+    Metni karakter karakter ters haritadan class_id dizisine çevirir,
+    kandidatları üretir ve EDPT sözlüğünde sorgular.
+    """
+    if spelling_decoder is None:
+        raise HTTPException(status_code=503, detail="Dekoder henüz yüklenmedi")
+
+    return spelling_decoder.decode_gokturk_text(req.text, mode=req.mode)
 
 
 @app.post("/predict")
@@ -272,6 +364,15 @@ async def predict_word(request: Request, files: List[UploadFile] = File(...), ap
     }
 
 
+def prepare_image_for_segmentation(img: Image.Image) -> Image.Image:
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        bg = Image.new("RGB", rgba.size, (255, 255, 255))
+        bg.paste(rgba, mask=rgba.split()[-1])
+        return bg
+    return img.convert("RGB")
+
+
 @app.post("/predict_image")
 @limiter.limit(f"{RATE_LIMIT_MINUTE}/minute; {RATE_LIMIT_DAY}/day")
 async def predict_image(request: Request, file: UploadFile = File(...), api_key: str = Depends(get_api_key)):
@@ -287,29 +388,39 @@ async def predict_image(request: Request, file: UploadFile = File(...), api_key:
 
     try:
         contents = await file.read()
-        img = Image.open(io.BytesIO(contents)).convert("RGB")
+        raw_img = Image.open(io.BytesIO(contents))
+        img = prepare_image_for_segmentation(raw_img)
     except Exception:
         raise HTTPException(status_code=400, detail="Geçersiz görsel dosyası")
 
     gray = np.array(img.convert("L"))
     binary = gray < 128
-    lines = segment_mod.find_components_by_line(binary, merge_gap_px=segment_mod.DEFAULT_MERGE_GAP_PX)
+    lines = segment_mod.find_components_by_line(binary, merge_gap_px=segment_mod.DEFAULT_MERGE_GAP_PX, rtl=True)
 
     if not lines:
         return {
+            "reading_order": "rtl",
             "words": [],
+            "word_count": 0,
             "overall_valid": False,
             "note": "Görselde hiç işaret tespit edilemedi (tamamen boş ya da eşik değeri uygun değil).",
+            "segmentation_debug": {
+                "total_lines": 0,
+                "total_boxes": 0,
+                "lines": [],
+            }
         }
 
-    # glyph / kolon ayrımı + kırpma + kelimelere bölme, satır satır.
-    # left_limit/right_limit (07_segment_word.py'nin CLI main()'indeki
-    # mantıkla birebir aynı) SADECE aynı satırdaki komşu kutuya bakar —
-    # bir satırın son glyph'i başka satırın ilk glyph'iyle asla komşu
-    # sayılmaz. Satır sonu, kolon olmasa bile örtük bir kelime sınırı
-    # sayılır (iki satır aynı kompozisyonda ayrı ifadeler olabilir).
     words_raw = []
-    for line_boxes in lines:
+    total_boxes = 0
+    seg_debug_lines = []
+
+    for line_idx, line_boxes in enumerate(lines):
+        total_boxes += len(line_boxes)
+        seg_debug_lines.append({
+            "line_index": line_idx + 1,
+            "boxes": line_boxes
+        })
         current = []
         for idx, box in enumerate(line_boxes):
             if segment_mod.is_colon(box, binary):
@@ -318,13 +429,16 @@ async def predict_image(request: Request, file: UploadFile = File(...), api_key:
                     current = []
                 continue
 
-            left_limit = 0
-            if idx > 0:
-                left_limit = (line_boxes[idx - 1][2] + box[0]) // 2
-
+            # RTL dizilimde (x0 azalan):
+            # Sağ komşu (x koordinatı daha büyük olan): idx - 1
             right_limit = img.width
+            if idx > 0:
+                right_limit = (line_boxes[idx - 1][0] + box[2]) // 2
+
+            # Sol komşu (x koordinatı daha küçük olan): idx + 1
+            left_limit = 0
             if idx < len(line_boxes) - 1:
-                right_limit = (box[2] + line_boxes[idx + 1][0]) // 2
+                left_limit = (box[0] + line_boxes[idx + 1][2]) // 2
 
             crop = segment_mod.crop_with_margin(
                 img, box,
@@ -334,7 +448,11 @@ async def predict_image(request: Request, file: UploadFile = File(...), api_key:
                 size=256,
             )
             result = bundle.predict(crop)
-            current.append({"type": "glyph", **result})
+            current.append({
+                "type": "glyph",
+                "box": box,
+                **result
+            })
 
         if current:
             words_raw.append(current)
@@ -348,16 +466,38 @@ async def predict_image(request: Request, file: UploadFile = File(...), api_key:
         word_valid = (not any_glyph_invalid) and harmony["harmony_consistent"]
         if not word_valid:
             any_word_invalid = True
+
+        sound_hints = []
+        for g in w:
+            top_k = g.get("top_k", [])
+            sounds = top_k[0].get("sound", []) if top_k else []
+            sound_hints.append(sounds[0] if sounds else "")
+
+        sound_hint_seq = "-".join([s for s in sound_hints if s])
+
+        decoder_res = spelling_decoder.decode_sequence(sequence) if spelling_decoder else {}
+
         words_out.append({
             "glyphs": w,
             "orthography": harmony,
+            "sound_hints": sound_hints,
+            "sound_hint_sequence": sound_hint_seq,
             "word_valid": word_valid,
+            "dictionary_matched_candidates": decoder_res.get("dictionary_matched_candidates", []),
+            "unmatched_candidates": decoder_res.get("unmatched_candidates", []),
+            "dictionary_note": decoder_res.get("dictionary_note", ""),
         })
 
     return {
+        "reading_order": "rtl",
         "words": words_out,
         "word_count": len(words_out),
         "overall_valid": (len(words_out) > 0) and (not any_word_invalid),
+        "segmentation_debug": {
+            "total_lines": len(lines),
+            "total_boxes": total_boxes,
+            "lines": seg_debug_lines,
+        }
     }
 
 
@@ -390,8 +530,8 @@ def translate(request: Request, req: TranslateRequest, api_key: str = Depends(ge
                 "glyph_ref": ":",
                 "codepoint": "U+003A",
             })
-        elif cid in bundle.class_meta:
-            meta = bundle.class_meta[cid]
+        elif cid in class_meta_map:
+            meta = class_meta_map[cid]
             sequence.append({
                 "class_id": cid,
                 "latin": latin_chunk,
@@ -414,6 +554,136 @@ def translate(request: Request, req: TranslateRequest, api_key: str = Depends(ge
         "sequence": sequence,
         "gokturkce_text": "".join(s["glyph_ref"] or "" for s in sequence),
     }
+
+
+@app.post("/api/render")
+@limiter.limit(f"{RATE_LIMIT_MINUTE}/minute; {RATE_LIMIT_DAY}/day")
+async def api_render(request: Request, req: RenderRequest, api_key: str = Depends(get_api_key)):
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    if req.style not in STYLES:
+        raise HTTPException(status_code=400, detail=f"Invalid style. Must be one of: {', '.join(STYLES.keys())}")
+    
+    try:
+        img = render_img(
+            text=req.text,
+            style=req.style,
+            size=req.size,
+            degradation=req.degradation,
+            text_color=req.text_color,
+            transparent_bg=req.transparent_bg,
+            texture=req.texture,
+            texture_var=req.texture_var,
+            stamp_var=req.stamp_var,
+            light_direction=req.light_direction,
+            font_variant=req.font_variant or "auto"
+        )
+        
+        img_byte_arr = io.BytesIO()
+        img.save(img_byte_arr, format='PNG')
+        img_byte_arr = img_byte_arr.getvalue()
+        
+        return Response(content=img_byte_arr, media_type="image/png")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/render_video")
+@limiter.limit(f"{RATE_LIMIT_MINUTE}/minute; {RATE_LIMIT_DAY}/day")
+async def api_render_video(request: Request, req: RenderVideoRequest, api_key: str = Depends(get_api_key)):
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    if req.style not in STYLES:
+        raise HTTPException(status_code=400, detail=f"Invalid style. Must be one of: {', '.join(STYLES.keys())}")
+    if req.motion not in ["parallax", "zoom", "pan", "fade"]:
+        raise HTTPException(status_code=400, detail="Invalid motion. Must be one of: parallax, zoom, pan, fade")
+    
+    try:
+        img = render_img(
+            text=req.text,
+            style=req.style,
+            size=req.size,
+            degradation=req.degradation,
+            text_color=req.text_color,
+            transparent_bg=req.transparent_bg,
+            texture=req.texture,
+            texture_var=req.texture_var,
+            stamp_var=req.stamp_var,
+            light_direction=req.light_direction,
+            font_variant=req.font_variant or "auto"
+        )
+        
+        video_bytes = video_renderer.render_to_video(
+            image=img,
+            motion=req.motion,
+            duration=req.duration,
+            fps=30
+        )
+        
+        return Response(content=video_bytes, media_type="video/mp4")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/config")
+def get_config():
+    return {"enable_compositor_tab": ENABLE_COMPOSITOR_TAB}
+
+
+@app.post("/api/composite")
+@limiter.limit(f"{RATE_LIMIT_MINUTE}/minute; {RATE_LIMIT_DAY}/day")
+async def api_composite(
+    request: Request,
+    base_image: UploadFile = File(...),
+    text: str = Form(...),
+    bbox: str = Form("100,100,400,150"),
+    style: str = Form("stone"),
+    text_color: str | None = Form(None),
+    scale: float = Form(0.8),
+    auto_color_match: bool = Form(True),
+    texture: str | None = Form(None),
+    api_key: str = Depends(get_api_key)
+):
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+    if style not in STYLES:
+        raise HTTPException(status_code=400, detail=f"Invalid style. Must be one of: {', '.join(STYLES.keys())}")
+    
+    try:
+        bbox_tuple = tuple(int(v.strip()) for v in bbox.split(","))
+        if len(bbox_tuple) != 4:
+            raise ValueError("bbox must be 4 integers x,y,w,h")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid bbox format. Must be x,y,w,h")
+        
+    try:
+        contents = await base_image.read()
+        raw_img = Image.open(io.BytesIO(contents)).convert("RGBA")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Geçersiz görsel dosyası")
+        
+    try:
+        result_img = composite_text(
+            base_image=raw_img,
+            text=text,
+            bbox=bbox_tuple,
+            style=style,
+            perspective_corners=None,
+            shadow=True,
+            color_match=auto_color_match,
+            text_color=text_color,
+            scale=scale,
+            auto_color_match=auto_color_match,
+            texture=texture
+        )
+        
+        img_byte_arr = io.BytesIO()
+        result_img.save(img_byte_arr, format='PNG')
+        img_byte_arr = img_byte_arr.getvalue()
+        
+        return Response(content=img_byte_arr, media_type="image/png")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/")

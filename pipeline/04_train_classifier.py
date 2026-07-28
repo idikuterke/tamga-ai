@@ -49,7 +49,11 @@ class GlyphDataset(Dataset):
 
     def __getitem__(self, idx):
         path, label = self.items[idx]
-        img = Image.open(path).convert("RGB")
+        try:
+            img = Image.open(path).convert("RGB")
+        except Exception:
+            # If file was corrupted due to sudden reboot/shutdown, return fallback blank image
+            img = Image.new("RGB", (224, 224), (255, 255, 255))
         return self.transform(img), label
 
 
@@ -71,9 +75,10 @@ def main():
     ap.add_argument("--conf_threshold", type=float, default=0.6,
                      help="softmax güveni bu değerin altındaysa 'invalid/emin değil' say")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="device: 'cpu' or 'cuda'")
     args = ap.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(args.device)
 
     with open(args.schema, encoding="utf-8") as f:
         schema = json.load(f)

@@ -1,0 +1,300 @@
+# Antigravity Prompt — Stil Görünürlük Düzeltme Paketi (P2)
+
+## Proje Konumu
+Çalışma dizini: `C:\Users\pc\gokturk_studio\pipeline\product\`
+Ana dosya: `render.py`
+UI: `static/index.html`
+
+## Önceki Paket Durumu
+- P0+P1 (carved binarizasyon fix, 4 stil rewrite, lock color toggle) — tamamlandı
+- Q1+Q2+Q3 (16-bit pipeline, yönsel ışık, çok-katmanlı mimari) — tamamlandı
+- **Bu paket onların ÜSTÜNDE düzeltme yapacak, regresyon yapmayacak**
+
+## Sorun (Kullanıcı Geri Bildirimi — Direkt Alıntı)
+> "kabartma ve kazıma başarılı hale gelmiş evet ama diğerleri `ember` `ash` `chalk` `stamp` `stencil` hala kötü. eskiden neon vardı onu stil olarak getirelim en azından işlevsel ve güzeldi. bunlardan kazıma, kabartma ve fırça hoşuma gitti. diğerleri istediğim gibi değil, harf görünmüyor ki estetik görünsün"
+
+5 stil hâlâ kötü: harf gövdesi efektler tarafından yeniyor, kontur belirsiz, renk kimliği kaybolmuş (özellikle ember). Stamp de Q1-Q3'te bozulmuş. Neon'un kimliği bozulmuş ama orijinal hali iyiydi — vitrine çıkarılmalı.
+
+## Temel Prensip — "Letter-First" (YENİ KURAL)
+**Hiçbir stil harfin merkez kütlesini (mask alpha > 200 bölgesi) %30'dan fazla azaltmasın. Erosion kenarda, glow üstte, çatlak yüzeyde olsun — gövde korunacak.**
+
+Bu kural tüm düzeltmelerde temel alınacak.
+
+## Çalışan Stiller — DOKUNMA
+- `carved` (kazıma) — başarılı, korunacak
+- `parchment` (kabartma hissi, kazıma değil ama kabartma olarak algılanıyor) — korunacak
+- `fircha` (fırça) — başarılı, korunacak
+- `plain` — korunacak
+
+Yalnızca 5 başarısız stil + neon düzeltilecek.
+
+---
+
+## İŞ 1 — `chalk` Düzeltmesi (Görünürlük)
+
+### Mevcut Sorun
+Q1-Q3'teki morfolojik erosion harfin **gövdesinde** delik açıyor. Erosion kernel harfin iç bölgelerinde de çalışıyor → harf parçalanmış görünüyor.
+
+### Yapılacak
+Erosion'ı sadece **maskenin dış kenarında** uygula, gövdeye dokunma:
+```python
+# Mevcut erosion bloğunu şu mantıkla değiştir:
+eroded_mask = mask_arr < threshold  # en dış kenarlar (alpha düşük)
+mask_safe = mask_arr.copy()
+mask_safe[eroded_mask] = 0  # sadece dış kenarda sıfırla
+# GÖVDE KORUMASI (Letter-First):
+mask_safe[mask_arr > 150] = mask_arr[mask_arr > 150]  # gövdede ASLA sıfırlama
+```
+
+Toz noise (P1'deki) ve edge dust / drop shadow (Q1-Q3'teki) olduğu gibi kalsın.
+
+### Kabul Kriteri
+- Harf gövdesinin en az %70'i tam alpha (255) yoğunluğunda olmalı.
+- Sadece dış kenarda tozumsu boşluklar görünmeli.
+
+---
+
+## İŞ 2 — `ember` Düzeltmesi (Renk Kimliği)
+
+### Mevcut Sorun
+Q1-Q3'te eklenen 4. katman (hot white core) harfin fg rengini (turuncu) yutuyor, beyaz ışık küre gibi görünüyor. `center_weight` formülü de beyaz tonu fazla parlak yapıyor.
+
+### Yapılacak
+1. **L4 hot white core'u tamamen kaldır.** Hot core sadece harfi renksizleştiriyor, estetik katmıyor.
+2. L1, L2, L3 (outer halo, middle glow, inner core gradient) Q1-Q3 haliyle kalsın.
+3. Inner core gradient formülünde `center_weight` değerlerini kontrol et — merkez çok parlaksa alpha değerlerini 0.85 ile çarp:
+   ```python
+   # Mevcut emb_r hesabı (Q1-Q3 sonrası):
+   # emb_r = np.clip(fg_r * 0.25 + center_weight * (255 - 60), 0, 255)
+   # Üst sınırı ekle (max 240, saf beyaz olmasın):
+   emb_r = np.clip(fg_r * 0.25 + center_weight * (240 - 60), 0, 255)
+   # Aynısı g ve b için de:
+   emb_g = np.clip(fg_g * 0.10 + center_weight * (220 - 60), 0, 255)
+   emb_b = np.clip(fg_b * 0.05 + center_weight * (140 - 60), 0, 255)
+   ```
+4. Default fg_color `(255, 180, 50)` korunmalı, beyaz ton override etmemeli.
+
+### Kabul Kriteri
+- Harf turuncu rengini korumalı, beyaz ışık küre gibi görünmemeli.
+- Avg RGB ölçümünde R > 200, G > 100, B < 100 (turuncu) aralığında olmalı.
+
+---
+
+## İŞ 3 — `ash` Düzeltmesi (Çatlak Sınırlaması)
+
+### Mevcut Sorun
+Çatlaklar harfin **gövdesinden** geçiyor, macro-fading harfi eritiyor. Çatlak pattern'i tüm maske üzerinde uygulanıyor.
+
+### Yapılacak
+1. **Çatlaklar sadece yüzeyde** olsun, gövdede olmasın:
+   ```python
+   # Çatlak maskesi sadece alpha 100-200 aralığında aktif (gövde dışı + kenar)
+   surface_mask = (mask_arr >= 100) & (mask_arr <= 200)
+   # Gövde (alpha > 200) dokunulmaz kalır:
+   body_mask = mask_arr > 200
+   # Çatlak sadece surface'e uygulanır:
+   ash_with_cracks = mask_arr.copy()
+   ash_with_cracks[surface_mask] = mask_arr[surface_mask] * crack_intensity
+   # body_mask zaten korunuyor (koşul yüzünden)
+   ```
+2. **Macro-fading bloğunu ciddi şekilde zayıflat:**
+   - `blur_ash = max(1.0, font_size * 0.025)` → `blur_ash = max(0.5, font_size * 0.008)` (3x küçült)
+   - VEYA bloğu tamamen kaldır (Q1-Q3 öncesi haline dön), sadece dust halo (L4) kalsın
+3. Dust halo (Q1-Q3'teki L4) olduğu gibi kalsın — harfin DIŞINDA halo vermesi doğru, gövdeye dokunmuyor.
+
+### Kabul Kriteri
+- Harf gövdesi en az %70 alpha yoğunluğunda olmalı.
+- Çatlaklar sadece harfin yüzeyinde (kenarlara yakın) görünmeli, gövde içinden geçmemeli.
+
+---
+
+## İŞ 4 — `stamp` GERİ DÖNÜŞÜ (P0 Haline)
+
+### Mevcut Sorun
+Q1-Q3'te eklenen L3 "edge wear (1-2px border erosion, %20 alpha düşüşü)" orijinal stamp stilini bozdu. Harf "solmuş" görünüyor. P0 sonrası + Q1-Q3 öncesi hali (sadece pressure + grunge) daha iyiydi.
+
+### Yapılacak
+1. **L3 edge wear bloğunu tamamen kaldır.** Q1-Q3 öncesi P0 haline geri dön.
+2. **Sadece L1 (pressure variation) + L2 (grunge holes) kalsın.** Bunlar P0'da vardı ve iyi çalışıyordu.
+3. **stamp_var="rot" ve stamp_var="grunge" varyantları** mevcut haliyle (P0) korunsun, hiçbir değişiklik yapılmasın.
+4. **Rotasyon açısı** (-1.5 ila 1.5 derece, veya rot varyantında 4-5 derece) korunsun.
+5. **Grunge threshold'ları** (0.6, 0.8, 1.2 vs.) korunsun.
+
+### Kabul Kriteri
+- Stamp harfi orijinal (P0 sonrası) haline dönmeli: basınç değişimi + grunge delikleri var, ama kenarda solma yok.
+- `stamp_var="rot"` ve `stamp_var="grunge"` çağrıları orijinal davranışla çalışmalı.
+- Harf gövdesi en az %70 alpha yoğunluğunda olmalı.
+
+---
+
+## İŞ 5 — `stencil` Düzeltmesi (Delik Sıklığı)
+
+### Mevcut Sorun
+Gerçek ızgara delikleri çok sık. Harfin %30-40'ı delik, "harf" değil "delik deseni" gibi görünüyor. Drop shadow da kontrastı artırıp delikleri daha belirgin yapıyor.
+
+### Yapılacak
+1. **Period'u ~2x büyüt (daha az delik):**
+   - `period_x = max(8.0, font_size * 0.18)` → `period_x = max(12.0, font_size * 0.36)`
+   - `period_y = max(8.0, font_size * 0.22)` → `period_y = max(12.0, font_size * 0.44)`
+2. **Gap'i biraz küçült (delikler daha küçük):**
+   - `gap_x = max(2.0, font_size * 0.04)` → `gap_x = max(1.5, font_size * 0.03)`
+   - `gap_y = max(2.0, font_size * 0.05)` → `gap_y = max(1.5, font_size * 0.035)`
+3. **Drop shadow'u kaldır.** Harf zaten kontrastlı (kesik alanlar), gölge delikleri daha belirgin yapıp harf bütünlüğünü bozuyor.
+4. Sadece delik kesimi kalsın (Q1-Q3 haliyle), diğer mantık aynı.
+
+### Kabul Kriteri
+- Harf gövdesinin en az %85'i boşluksuz olmalı, sadece küçük stencil delikleri (toplam %10-15) görünmeli.
+- Harf hâlâ "stencil" gibi okunmalı ama "delik deseni" gibi değil.
+
+---
+
+## İŞ 6 — `neon` Geri Dönüşü + Vitrin
+
+### Mevcut Sorun
+Q1-Q3'te L3 "bright white core" eklendi, neon'un kimliği (siyah arka plan + cyan parlak yazı) bozuldu. Beyaz core yazının kendisini renksizleştirdi.
+
+### Yapılacak
+1. **L3 bright white core'u tamamen kaldır.** Q1-Q3 öncesi 2-katmanlı hale dön.
+2. **L1 outer halo + L2 middle bloom** (mevcut) korunsun.
+3. **Style dict'inde** `neon` için `fg=(0, 255, 200)` (cyan) ve `bg=(10, 10, 30)` (koyu lacivert) doğrula, değiştirme.
+4. **`STYLES["neon"]` zaten var** — yeni ekleme yok, sadece L3 kaldırılacak.
+5. **Vitrin stili olarak öne çıkar:**
+   - `static/index.html`'deki `renderStyle` dropdown'ında neon'u **ilk sıraya** taşı.
+   - Neon için `textureSuggestionHint`'te vitrin mesajı:
+     - Şu an: `"💡 Öneri: Düz Arka Plan (veya alternatif: Neon Işık / Taş)"`
+     - Yeni: neon seçildiğinde `"🌟 Vitrin Stili — yüksek kontrast, karanlık arka plan"`
+   - `resetTextColor` defaults sözlüğünde neon zaten var, kontrol et.
+
+### Kabul Kriteri
+- Neon orijinal kimliğine dönmeli: siyah arka plan, cyan parlak yazı, glow etrafında.
+- Harf avg RGB ölçümünde cyan tonu (R < 100, G > 200, B > 150) aralığında olmalı.
+- UI dropdown'ında neon ilk sırada görünmeli.
+
+---
+
+## Doğrulama Prosedürü
+
+### 1. Regresyon testleri
+```bash
+cd C:\Users\pc\gokturk_studio\pipeline\product
+python test_render.py
+```
+Tüm testler geçmeli (carved, kazıma, fırça, plain, neon dahil TÜM 10 stil).
+
+### 2. Manuel görsel testler — 5×2 = 10 PNG + 2 neon showcase
+```bash
+python -c "from render import render; \
+styles = ['chalk', 'ember', 'ash', 'stamp', 'stencil']; \
+[render('tengri', style=s, size=512, light_direction=(-1,-1)).save(f'test_p2_{s}.png') for s in styles]; \
+[render('gök türk bodun', style=s, size=512, light_direction=(-1,-1)).save(f'test_p2_{s}_long.png') for s in styles]; \
+render('tengri', style='neon', size=512).save('test_p2_neon.png'); \
+render('gök türk', style='neon', size=512).save('test_p2_neon_long.png'); \
+print('5x2 + 2 neon PNGs generated!')"
+```
+
+### 3. Otomatik görsel kabul kriteri (Letter-First Doğrulaması)
+Her test PNG için harf gövdesinin ortalama alpha yoğunluğunu ölç:
+```bash
+python -c "
+from PIL import Image
+import numpy as np
+results = []
+for style in ['chalk', 'ember', 'ash', 'stamp', 'stencil', 'neon']:
+    img = np.array(Image.open(f'test_p2_{style}.png').convert('L'))
+    letter_mask = img > 50
+    if letter_mask.sum() > 0:
+        avg_alpha = img[letter_mask].mean()
+        coverage = letter_mask.sum() / img.size * 100
+        results.append((style, avg_alpha, coverage))
+        print(f'{style}: avg_alpha={avg_alpha:.1f}, coverage={coverage:.1f}% (target: avg>180, coverage>5%)')
+# Tüm avg_alpha > 180 olmalı, yoksa hangisi başarısız rapor et
+failed = [r for r in results if r[1] < 180]
+if failed:
+    print(f'FAILED: {failed}')
+else:
+    print('ALL STYLES PASS letter-first check!')
+"
+```
+
+**Hedef:** Tüm 6 stil için `avg_alpha > 180` (gövde en az %70 yoğunlukta).
+
+### 4. Renk kimliği doğrulaması (ember + neon)
+```bash
+python -c "
+from PIL import Image
+import numpy as np
+# Ember turuncu olmalı
+ember = np.array(Image.open('test_p2_ember.png').convert('RGB'))
+letter_mask = np.array(Image.open('test_p2_ember.png').convert('L')) > 50
+avg_rgb = ember[letter_mask].mean(axis=0)
+print(f'ember avg RGB: R={avg_rgb[0]:.0f}, G={avg_rgb[1]:.0f}, B={avg_rgb[2]:.0f} (target: R>200, G>100, B<100)')
+# Neon cyan olmalı
+neon = np.array(Image.open('test_p2_neon.png').convert('RGB'))
+letter_mask = np.array(Image.open('test_p2_neon.png').convert('L')) > 50
+avg_rgb = neon[letter_mask].mean(axis=0)
+print(f'neon avg RGB: R={avg_rgb[0]:.0f}, G={avg_rgb[1]:.0f}, B={avg_rgb[2]:.0f} (target: R<100, G>200, B>150)')
+"
+```
+
+### 5. Backward compat
+```bash
+python -c "from render import render; \
+render('tengri', style='stone', size=512).save('test_legacy.png'); \
+render('tengri', style='neon', size=512, stamp_var='black').save('test_stamp_black.png'); \
+print('Legacy tests passed!')"
+```
+
+### 6. walkthrough.md güncelle
+- "P2 — Letter-First Görünürlük Düzeltmesi" bölümü
+- Her stil için ne değişti (eski → yeni, neden değişti)
+- Görsel kabul kriteri sonuçları (avg_alpha, coverage, RGB)
+- Neon vitrin pozisyonu (UI değişikliği)
+
+### 7. Uvicorn yeniden başlat
+Mevcut görevi sonlandır, yeni kodla:
+```bash
+python -m uvicorn app:app --host 127.0.0.1 --port 8000
+```
+
+### 8. Tüm PNG'leri Antigravity brain'e kopyala
+
+---
+
+## Sınırlamalar (UY)
+
+- **Çalışan stillere dokunma**: carved, kazıma, kabartma, fircha, plain — bunlar zaten iyi
+- **Stamp'in orijinal P0 mantığı tam korunmalı** (pressure + grunge varyantları dahil) — sadece Q1-Q3'te yanlışlıkla eklenen L3 edge wear kaldırılacak
+- **Glow / shadow / halo sistemi korunsun** — sadece yoğunluk/sıklık azaltılıyor, mimari değil
+- **Geriye dönük uyumluluk** — eski `style="stone"`, `style="neon"`, `stamp_var="rot"`, `stamp_var="grunge"` çağrıları değişmesin
+- **STYLES / STYLE_TO_TEXTURE_SUGGESTION** yapıları bozulmasın
+- **Yol B prensibi** — tüm efektler font_size ile orantılı kalsın
+- **Letter-First kuralı** — hiçbir stil harf gövdesini %30'dan fazla azaltmasın
+
+---
+
+## Teslim Listesi (Rapor İçin)
+
+1. ✅ 5 stil için hangi satırlar/bloklar değişti (özet, neden değişti)
+2. ✅ Stamp'ten L3 edge wear bloğu kaldırıldı mı, orijinal P0 mantığı korundu mu
+3. ✅ Neon'dan L3 white core kaldırıldı mı, vitrin pozisyonuna taşındı mı
+4. ✅ `python test_render.py` çıktısı (TÜM 10 stil geçti mi, sıfır hata?)
+5. ✅ 10 test PNG (5 stil × 2 uzunluk) + 2 neon showcase PNG dosya yolları
+6. ✅ Otomatik görsel kabul sonuçları:
+   - 6 stil için avg_alpha değerleri (hepsi > 180 olmalı)
+   - Ember RGB (turuncu, R>200 G>100 B<100)
+   - Neon RGB (cyan, R<100 G>200 B>150)
+7. ✅ Legacy `style="stone"`, `style="neon"`, `stamp_var="rot"/"grunge"` testleri geçti mi
+8. ✅ walkthrough.md güncellendi mi
+9. ✅ Uvicorn yeni kodla çalışıyor mu (yeni task ID)
+10. ⚠️ Herhangi bir stil hâlâ görünürlük testini geçemedi ise açıkça belirt, sonraki paket için not düş
+11. ⚠️ Herhangi bir trade-off veya beklenmedik zorluk varsa açıkça belirt
+
+---
+
+## Sonraki Paket (P3 ve sonrası — duruma göre)
+Bu paket sadece **görünürlük** düzeltmesi. Eğer 6 stil görsel kabul kriterlerini geçerse:
+- **Görünürlük başarılıysa**: Q4-Q6 (intensity slider, quality preset, brush/fiber realism) sırada
+- **Görünürlük yetersizse**: Daha agresif düzeltme veya font konusu masaya yatırılacak
+- **Telif/lisans** konusu bu pakette değil, sonra konuşulacak (Noto OFL zaten serbest)
+
+Kullanıcı kararı: sonuç raporuna göre yön belirleyecek.

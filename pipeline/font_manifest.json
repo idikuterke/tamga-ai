@@ -24,6 +24,7 @@
     { "name": "Orkun_turkorgau", "path": "fonts/Orkun.ttf", "coverage": "orhun_only", "style_tag": "bold_sharp" },
     { "name": "Firca_turkorgau", "path": "fonts/Firca2.ttf", "coverage": "orhun_only", "style_tag": "brush" },
     { "name": "Kokturkce_turkorgau", "path": "fonts/Kokturkce.ttf", "coverage": "orhun_only", "style_tag": "soft_calligraphic" },
-    { "name": "TugrulCavdar", "path": "fonts/KokTuruk2004UnicodeTugrulCavdar.ttf", "coverage": "orhun_only", "style_tag": "authority_reference" }
+    { "name": "TugrulCavdar", "path": "fonts/KokTuruk2004UnicodeTugrulCavdar.ttf", "coverage": "orhun_only", "style_tag": "authority_reference" },
+    { "name": "NotoSansOldTurkic", "path": "fonts/NotoSansOldTurkic-Regular.ttf", "coverage": "orhun_yenisei", "style_tag": "unicode_standard" }
   ]
 }

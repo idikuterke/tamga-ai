@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "gokturkce-assistant": {
+      "command": "python",
+      "args": [
+        "C:\\Users\\pc\\gokturk_pipeline\\pipeline\\product\\mcp_server.py",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}

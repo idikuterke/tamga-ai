@@ -117,26 +117,23 @@ def split_into_lines(binary_mask, min_gap_px=DEFAULT_MIN_LINE_GAP_PX):
     return bands
 
 
-def find_components_by_line(binary_mask, merge_gap_px, min_line_gap_px=DEFAULT_MIN_LINE_GAP_PX):
+def sort_boxes_rtl(line_boxes):
+    """
+    Bir satırdaki kutuları Göktürkçe okuma sırasına (Sağdan Sola / RTL)
+    göre sıralar (x0 değerine göre azalan/büyükten küçüğe).
+    """
+    return sorted(line_boxes, key=lambda b: b[0], reverse=True)
+
+
+def find_components_by_line(binary_mask, merge_gap_px, min_line_gap_px=DEFAULT_MIN_LINE_GAP_PX, rtl=True):
     """
     07_segment_word.py'nin asıl giriş noktası: önce satırlara ayırır
     (split_into_lines), sonra HER SATIRI KENDİ İÇİNDE find_components ile
-    işler. Bu, farklı satırlardaki ama x-ekseninde çakışan glyph'lerin
-    (find_components'in yalnızca x-ekseni mesafesine bakan birleştirme
-    mantığı yüzünden) yanlışlıkla tek bileşene birleşmesini önler —
-    çok-satırlı bir görselde bu birleşme, neredeyse tüm görsel yüksekliğini
-    kaplayan anormal geniş kutularla kendini belli eder.
+    işler.
 
-    Döner: List[List[box]] — SATIR SATIR GRUPLANMIŞ kutu listesi (her satır
-    kendi içinde soldan sağa sıralı, satırlar üstten alta sıralı). Düz bir
-    liste DEĞİL: çağıran taraf (crop_with_margin için left_limit/right_limit
-    hesaplarken) komşu kutuyu sadece AYNI SATIR içinde aramalı — aksi halde
-    bir satırın son glyph'i ile sonraki satırın ilk glyph'i birbirine komşu
-    sayılır ve kırpma sınırı anlamsızlaşır.
-
-    Tek satırlı görsellerde tek elemanlı bir liste döner ve o tek satırın
-    içeriği find_components'i doğrudan tüm görsel üzerinde çağırmakla
-    birebir aynıdır.
+    Parametreler:
+      - rtl: True ise her satırdaki kutular Göktürkçe okuma yönüne (Sağdan Sola)
+        uygun şekilde x0 koordinatına göre azalan sırada sıralanır.
     """
     bands = split_into_lines(binary_mask, min_gap_px=min_line_gap_px)
     if not bands:
@@ -149,6 +146,8 @@ def find_components_by_line(binary_mask, merge_gap_px, min_line_gap_px=DEFAULT_M
             [bx0, by0 + y0, bx1, by1 + y0]
             for bx0, by0, bx1, by1 in find_components(sub_mask, merge_gap_px=merge_gap_px)
         ]
+        if rtl:
+            line_boxes = sort_boxes_rtl(line_boxes)
         lines.append(line_boxes)
 
     return lines

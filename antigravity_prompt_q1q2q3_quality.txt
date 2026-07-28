@@ -1,0 +1,209 @@
+# Antigravity Prompt — Kalite Sıçraması Paketi (Q1 + Q2 + Q3)
+
+## Proje Konumu
+Çalışma dizini: `C:\Users\pc\gokturk_studio\pipeline\product\`
+Ana dosya: `render.py`
+UI: `static/index.html`
+
+## Önceki Paket Durumu
+P0+P1 (carved binarizasyon bug fix, 4 zayıf stilin yeniden yazımı, derinlik/halo katmanı, lock color toggle) **tamamlandı ve onaylandı**. Stamp stili korundu, geriye dönük uyumluluk sağlam, walkthrough.md güncel. Bu paket onun üstüne inşa edilecek — mevcut kodu temiz baz al, yeni parametreler ekle, regression yapma.
+
+**STAMP STİLİNE YİNE DOKUNMA.** Mevcut haliyle (döndürme, grunge, rot varyantları dahil) korunacak.
+
+---
+
+## İŞ 1 (Q1) — 16-bit / Float Dâhili Pipeline
+Dosya: `render.py` (tüm compositing katmanları)
+
+### Sorun
+Mevcut pipeline tamamen `uint8` (0–255) üzerinde çalışıyor. Özellikle:
+- Ember'in 3 katmanlı glow'unda kenar yumuşaklığında 8-bit banding var (kırmızı→siyah geçişinde posterizasyon)
+- Chalk'in powder noise'unda düşük-yoğunluklu pikseller quantize oluyor
+- Ash'in halo'sunda alpha gradient'i merdiven gibi
+
+### Yapılacak
+1. **`create_background` ve `bg` oluşturan tüm bloklar** için: PIL'de `mode="RGB"` yerine `mode="I;16"` (veya `mode="F"` float32) kullan. NumPy işlemlerinde `dtype=np.float32` tercih et.
+2. **Tüm compositing katmanları** (`Image.alpha_composite`, `ImageChops.multiply`, `ImageChops.screen`, `ImageChops.subtract`, `mask.filter(GaussianBlur)` çağrıları) 16-bit/float modda çalışsın.
+3. **`mask` üretimi** (yazı maskesi): `Image.new("L", ..., 0)` yerine `Image.new("F", ..., 0.0)` veya `Image.new("I;16", ...)` kullan, tüm efektler boyunca aynı mod.
+4. **`fg_color`, `bg_color`, palet renkleri**: 0–255 tuple yerine 0.0–1.0 float olarak normalize et, blend'lerde kullan, sonra geri 0–255'e dön.
+5. **En sonda** (`return bg` öncesi): Tek seferde `bg.convert("RGB")` veya `bg.convert("RGBA")` çağrısı ile 8-bit'e indir. Bu tek dönüşüm noktası dışında hiçbir yerde 8-bit'e düşme.
+6. **Performans**: 16-bit float operasyonlar yavaştır, 512x512 için sorun olmaz; 1920x1920'de %30-50 yavaşlama olabilir, kabul edilebilir.
+
+### Doğrulama
+- Tüm renk geçişlerinde banding kaybolmalı (özellikle ember glow, ash halo, parchment vignette).
+- test_render.py sıfır hatayla geçmeli.
+- Legacy `style="stone"` çağrısı hâlâ çalışmalı.
+
+---
+
+## İŞ 2 (Q2) — Yönsel Işık Kaynağı
+Dosya: `render.py`, `render()` fonksiyon imzası + 3D etkili stillerin blokları
+
+### Sorun
+`carved` stili line 672–700'deki inner shadow + highlight **sabit sağa-aşağı + sola-yukarı** offset kullanıyor. Bu, gerçek bir ışık kaynağına bağlı değil — tutarlı değil ve "stüdyo aydınlatması" hissi vermiyor.
+
+### Yapılacak
+1. **Yeni parametre**: `render()` fonksiyonuna `light_direction: Tuple[int, int] = (-1, -1)` ekle (varsayılan sol-üst ışık). `(-1, -1)` = sol-üst, `(1, 1)` = sağ-alt.
+2. **Tüm 3D etkili stiller** (`carved`, `chalk`, `ash`, `parchment` — gölge/relief içeren) bu parametreyi kullansın:
+   - **Inner shadow offset**: ışık yönünün TERSİNE (örn. light=(-1,-1) → shadow offset=(+1,+1) sağ-alt), mesafe `max(2, int(font_size * 0.04))`.
+   - **Inner highlight offset**: ışık yönüne (light=(-1,-1) → highlight offset=(-1,-1) sol-üst), mesafe aynı.
+3. **`chalk`** drop shadow (P1'de eklenen) da ışık yönüne göre ayarlansın.
+4. **`stencil`** drop shadow da ışık yönüne göre ayarlansın.
+5. **`ember` ve `neon`**: Simetrik glow, ışık yönünden etkilenmez, mevcut haliyle kalsın.
+6. **`fircha`, `ink_bleed`, `stamp`**: Işık yönünden bağımsız, mevcut haliyle kalsın.
+7. **API**: `app.py`'deki `RenderRequest` ve `RenderVideoRequest` Pydantic modellerine `light_direction: Optional[Tuple[int, int]] = None` ekle. `index.html`'de opsiyonel küçük bir kontrol ekle (örn. "Işık: Sol-Üst / Sağ-Alt / Üst" preset butonları, default gizli veya basit bir dropdown).
+
+### Doğrulama
+- Aynı stil, farklı `light_direction` ile çağrıldığında gölge yönü gerçekten dönmeli.
+- test_render.py sıfır hatayla geçmeli.
+
+---
+
+## İŞ 3 (Q3) — Çok-Katmanlı Efekt Mimarisi
+Dosya: `render.py`, her stilin bloğu
+
+### Sorun
+Mevcut stiller tek geçişli efekt. Ember 3 katmanlı oldu (P1'de) ama diğerleri hâlâ tek-katmanlı. Gerçek "en kaliteli" görünüm için her stil 2-3 alt-katmandan oluşmalı: taban + doku + highlight/glow.
+
+### Yapılacak (her stil için alt-katman listesi)
+
+#### `ember` (4 katmana genişlet)
+- L1 — Outer halo: blur `font_size * 0.10`, renk `(180, 30, 0)`, alpha 100
+- L2 — Middle glow: blur `font_size * 0.05`, renk `(255, 120, 20)`, alpha 150
+- L3 — Inner core gradient: blur `font_size * 0.025`, center_weight formülü (mevcut P1 formülü korunsun, sadece brightness boost)
+- L4 — Hot white core: blur `font_size * 0.01`, renk `(255, 240, 200)`, alpha 220 (sadece merkez piksellerde, threshold > 200)
+- Her katman font_size ile orantılı, transparent bg için alpha compositing
+
+#### `ash` (4 katmana genişlet)
+- L1 — Micro-cracks: çözünürlük `font_size * 0.4`, threshold `0.06`, 3 açı (mevcut P1 korunsun)
+- L2 — Meso-cracks: çözünürlük `font_size * 0.2`, threshold `0.04`, 2 açı (90° ve 135°)
+- L3 — Macro-fading: mevcut fading edge alpha (blur `font_size * 0.025`)
+- L4 — Dust halo: mask blurred by `font_size * 0.05`, alpha 0.12, renk `(200, 200, 200)`
+- L1+L2 birleştirilip maske olarak kullanılır (OR'lanır, meso ve makro üst üste)
+
+#### `chalk` (4 katmana genişlet)
+- L1 — Powder noise: çözünürlük `font_size * 0.06` (P1'de eklenen korunsun)
+- L2 — Erosion holes: morphological erosion `font_size * 0.01` kernel (P1'de eklenen korunsun)
+- L3 — Edge dust: maske dış kenar GaussianBlur `font_size * 0.018` ile tozumsu dağılım
+- L4 — Drop shadow: P1'deki drop shadow + Q2'deki ışık yönü uygulaması
+- L1+L2 maske olarak, L3+L4 compositing katmanı olarak
+
+#### `carved` (3 katmana genişlet)
+- L1 — Chisel chipping: P1'deki (carved binarizasyon kaldırıldıktan sonraki) chisel noise
+- L2 — Inner shadow: Q2'deki ışık yönüne göre (mevcut line 672–700, Q2 ile hizalanır)
+- L3 — Inner highlight: Q2'deki ışık yönüne göre
+- Maske: L1 soft, compositing: L2+L3 (Q2 ışık yönüyle)
+
+#### `parchment` (3 katmana genişlet)
+- L1 — Fiber absorption: mevcut P1 parchment bloğu (line ~447) korunsun
+- L2 — Ink bleed gradient: mevcut ink noise (line ~636) korunsun
+- L3 — Burn edges / vignette: mevcut vignette (line ~153) + ek `burn_edges` (P1'de)
+- Maske: L1, compositing: L2+L3
+
+#### `fircha` (3 katmana genişlet)
+- L1 — Brush wave + noise: mevcut line 344–376 korunsun
+- L2 — Ink load variation: ek — `center_weight` ile harf merkezinde daha koyu, kenarlarda açılma (mask blurred, threshold formülü)
+- L3 — Edge bleed: maske dış kenarına küçük blur (`font_size * 0.008`) ile hafif mürekkep sızıntısı
+
+#### `ink_bleed` (3 katmana genişlet)
+- L1 — Fiber-aligned bleed: mevcut line 379–397 korunsun
+- L2 — Capillary spread: ek — `np.gradient` ile yatay/dikey yönde ek 1px spread (X ve Y ekseninde ayrı ayrı 1-piksel kaydır, `np.maximum.reduce`)
+- L3 — Edge softening: son maske GaussianBlur `font_size * 0.005`
+
+#### `stamp` (3 katmana genişlet)
+- L1 — Pressure variation: mevcut P0 (P1 öncesi) korunsun
+- L2 — Grunge: mevcut stamp_var="grunge" korunsun
+- L3 — Edge wear: ek — sadece maske kenarına (1-2px iç) %20 alpha düşüş (border erosion)
+- L1+L2 birleşik maske, L3 compositing alpha
+
+#### `neon` (3 katmana genişlet)
+- L1 — Outer halo: mevcut `glow` (size*0.02) korunsun
+- L2 — Middle bloom: mevcut `bloom` (size*0.01) korunsun
+- L3 — Bright core: ek — merkez piksellerde (mask > 200) beyaz çekirdek, alpha 0.8
+
+#### `plain` (2 katmana genişlet)
+- L1 — Base text: yazının kendisi (anti-aliased mask)
+- L2 — Sub-pixel refinement: 4x supersampling (Q5 gelince aktif olacak, şimdilik sadece mod yapısı hazır olsun)
+
+### Doğrulama
+- Her stil 1 kısa + 1 uzun metin PNG ile görsel test.
+- Katman sayısı arttıkça dosya boyutu büyür ama CPU süresi lineer artmaz (max 2x).
+- test_render.py sıfır hatayla geçmeli.
+
+---
+
+## Doğrulama Prosedürü
+
+### 1. Regresyon testleri
+```bash
+cd C:\Users\pc\gokturk_studio\pipeline\product
+python test_render.py
+```
+
+### 2. Manuel görsel testler
+```bash
+python -c "from render import render; \
+img = render('tengri', style='ember', texture='plain.png', size=512, light_direction=(-1,-1)); \
+img.save('test_ember_ql.png')"
+```
+Aynısını `ash`, `chalk`, `carved`, `parchment`, `fircha`, `ink_bleed`, `stamp`, `neon`, `stencil` için de yap. `light_direction=(1,1)` ile de bir set üret (ışık yönünün etkisini göstermek için).
+
+Uzun metin testi: `text='gök türk bodun'` her stil için.
+
+### 3. Backward compat
+```bash
+python -c "from render import render; \
+img = render('tengri', style='stone', size=512); \
+img.save('test_legacy.png')"
+```
+
+### 4. 16-bit pipeline doğrulaması
+Bir stil seç (örn. ember), gradient bölgesinden 10x10 patch crop et, pixel değerlerinin monoton arttığını doğrula (banding yok, 256'dan fazla ara değer). `python -c "from PIL import Image; import numpy as np; img = np.array(Image.open('test_ember_ql.png').convert('L')); patch = img[100:110, 100:110]; print('min:', patch.min(), 'max:', patch.max(), 'unique:', len(np.unique(patch)))"`
+
+### 5. walkthrough.md güncelle
+- "Q1 — 16-bit pipeline" bölümü: hangi katmanlar float, hangi conversion noktası
+- "Q2 — Yönsel ışık" bölümü: varsayılan yön, hangi stiller etkilendi
+- "Q3 — Çok-katmanlı mimari" bölümü: her stil için katman listesi
+- Yeni test PNG referansları (`test_*_ql.png`)
+
+### 6. Uvicorn yeniden başlat
+Mevcut görevi sonlandır, yeni kodla:
+```bash
+python -m uvicorn app:app --host 127.0.0.1 --port 8000
+```
+
+### 7. Tüm yeni PNG'leri Antigravity brain'e kopyala
+
+---
+
+## Sınırlamalar (UY)
+
+- **Stamp stiline DOKUNMA** — orijinal mantığı (rotation, grunge varyantları dahil) birebir korunsun
+- Tüm yeni piksel efektleri **font_size ile orantılı** (Yol B prensibi) — kısa ve uzun metin aynı kalitede
+- **Geriye dönük uyumluluk**: eski `style="stone"` çağrıları hâlâ çalışmalı, eski API imzaları değişmesin
+- **`STYLES` sözlüğünün key'leri ve yapısı** (`bg`, `fg`, `effects`, `texture_path`, `blend_mode`) korunsun
+- **`STYLE_TO_TEXTURE_SUGGESTION` tablosu** değişmesin
+- **`render_text.py` ve diğer dış kullanıcılar** bozulmasın — `render()` fonksiyon imzası sadece **yeni parametreler** eklensin, mevcut parametrelerin default değerleri ve sırası değişmesin
+- 16-bit/float pipeline'ın **performans maliyeti** kabul edilebilir (512x512 için <2x mevcut süre, 1920x1920 için <3x)
+
+---
+
+## Teslim Listesi (Rapor İçin)
+
+Antigravity tamamlandığında raporla:
+
+1. ✅ `render.py`'de hangi fonksiyonlar/bloklar 16-bit/float'a geçti, hangi tek dönüşüm noktası var
+2. ✅ `light_direction` parametresi kaç stilin davranışını değiştirdi, varsayılan yön ne
+3. ✅ Her stil için kaç alt-katman eklendi (listele)
+4. ✅ `python test_render.py` çıktısı (tüm testler geçti mi?)
+5. ✅ 10 stil × 2 light_direction × 2 metin uzunluğu için oluşturulan test PNG dosya yolları
+6. ✅ 16-bit pipeline doğrulaması (patch unique değer sayısı > 50 olmalı banding olmadığını gösterir)
+7. ✅ Backward compat testi geçti mi?
+8. ✅ walkthrough.md güncellendi mi?
+9. ✅ Uvicorn yeni kodla çalışıyor mu (yeni task ID)?
+10. ⚠️ Herhangi bir trade-off veya beklenmedik zorluk varsa açıkça belirt
+
+---
+
+## Sonraki Paket (Q4+Q5+Q6 — daha sonra)
+Bu pakette Q4 (per-style intensity slider), Q5 (quality preset draft/standard/high/ultra), Q6 (gerçekçi brush/fiber etkileşimi) **yok**. Sadece Q1+Q2+Q3. Q4-Q6 ayrı bir turda gelecek.

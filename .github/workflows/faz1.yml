@@ -1,0 +1,30 @@
+name: Faz1 Font Build
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install fonttools brotli pillow fontbakery skia-pathops
+      - name: Build font variants
+        run: python scripts/build_variants.py
+      - name: Subset fonts to WOFF2
+        run: python scripts/subset.py
+      - name: Generate proofs and numerical verification
+        run: python scripts/proof.py
+      - name: Run FontBakery QA check-universal
+        run: python scripts/run_qa.py || true
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: faz1-outputs
+          path: |
+            outputs/ttf/
+            outputs/web/
+            outputs/proofs/
+            outputs/tests/

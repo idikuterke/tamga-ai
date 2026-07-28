@@ -1,0 +1,207 @@
+# Antigravity Prompt — Stil Düzeltme Paketi (P0 + P1)
+
+## Proje Konumu
+Çalışma dizini: `C:\Users\pc\gokturk_studio\pipeline\product\`
+Ana dosya: `render.py` (709 satır)
+UI dosyası: `static/index.html` (~60KB)
+
+## Bağlam
+Stil/doku mimari ayrımı (refactor) ve 6 yazı stili (plain, fircha, ink_bleed, stamp, carved, parchment) tamamlandı. Kalan 4 yeni stil (chalk, ember, ash, stencil) implementasyonu zayıf, `carved` stilinin maske işlemi binarizasyon nedeniyle "damga gibi" çıkıyor. Bu pakette 4 iş uçtan uca, mevcut "Yol B" prensibine (tüm piksel efektleri font_size ile orantılı) ve geriye dönük uyumluluğa sadık kalarak tamamlanacak.
+
+**STAMP STİLİNE KESİNLİKLE DOKUNMA.** Orijinal haliyle korunacak, ne yeniden yazma ne parametre değişikliği.
+
+---
+
+## İŞ 1 (P0) — `carved` maskesinin binarizasyon bug'ı
+Dosya: `render.py`, satır 466–480
+
+### Sorun
+```python
+carve_mask_arr = np.where(carve_mask_arr > 100, 255, 0).astype(np.uint8)
+```
+Bu satır maskeyi binary 0/255'e çeviriyor. Anti-aliased yumuşak kenar kayboluyor, line 672–700'deki inner bevel (subtract operasyonu) bu binary maske üzerinde çalışınca "damga gibi" pixelated bir görüntü çıkıyor — gerçek oyuk/kazıma hissi değil.
+
+### Yapılacak
+1. Binarizasyonu tamamen kaldır (`np.where > 100, 255, 0` satırını sil).
+2. Anti-aliased maskeyi koru, sadece `mask_arr * np.array(chip_img)` ile yumuşak kenarlı "chisel micro-chipping" varyasyonunu uygula.
+3. Inner bevel kodunu (line 672–700) binarize'siz maske üzerinde çalışacak şekilde yeniden yaz:
+   - `inner_sh = max(0, mask - shifted)` yerine GaussianBlur'lu yumuşak fark: `inner_sh = ImageChops.subtract(mask, shifted).filter(ImageFilter.GaussianBlur(radius=blur_r))` (mevcut yöntem aslında doğru, sadece binarize'siz maske üstünde çalışsın)
+   - `inner_hi` için aynı yaklaşım.
+   - Offset ve blur değerleri Yol B'ye uygun kalsın: `offset = max(2, int(font_size * 0.04))`, `blur_r = max(0.8, font_size * 0.012)`.
+4. Sonuç: carved harflerin kenarları yumuşak oyuk (inner shadow) hissi versin, pixelated damga gibi değil.
+
+---
+
+## İŞ 2 (P0) — 4 zayıf stilin baştan yazılması
+Dosya: `render.py`, ilgili bloklar
+
+### 2.1 `chalk` (satır 482–500) — gerçek tebeşir/kömür
+- Maske üzerinde küçük bir morphological erosion (1-2px binary kernel ile `mask_arr < threshold` maskelenmiş pikselleri sıfırla) uygula — harf içi mikro boşluklar açsın
+- Tozumsu kenar için: önce `GaussianBlur(radius=font_size*0.012)`, sonra orijinal maske ile `np.minimum(blurred, mask)` — sadece dış kenarlar tozumsu dağılsın, iç dolu kalsın
+- Yüksek frekanslı powder noise (font_size'a orantılı çözünürlük: `int(canvas_h / max(2.0, font_size*0.05))`) ile grenli doku
+- Final maske: anti-aliased kalsın, binary yapma
+- Renk paleti: mevcut `(216, 212, 200)` kalsın (kullanıcı yine override edebilir)
+
+### 2.2 `ember` (satır 601–626) — gerçek kor/ateş
+- Mevcut tek-katmanlı outer glow yerine ÇOK KATMANLI (3 ayrı katman, 3 farklı yarıçap + 3 farklı renk):
+  - Dış: `glow_r = max(4.0, font_size*0.08)`, renk `(180, 30, 0)`, alpha 140
+  - Orta: `glow_r = max(2.0, font_size*0.04)`, renk `(255, 120, 20)`, alpha 180
+  - İç: `glow_r = max(1.0, font_size*0.02)`, renk `(255, 220, 120)`, alpha 200
+- Center weight formülünü düzelt (kenar koyu kırmızı, merkez parlak sarı-beyaz olmalı):
+  - `emb_r = np.clip(fg_r * 0.25 + center_weight * (255 - 60), 0, 255)`
+  - `emb_g = np.clip(fg_g * 0.10 + center_weight * (220 - 60), 0, 255)`
+  - `emb_b = np.clip(fg_b * 0.05 + center_weight * (140 - 60), 0, 255)`
+  - Bu sayede kenarda `(64, 18, 3)` koyu kırmızı, merkezde `(255, 220, 140)` parlak sarı çıkar
+- Her katman font_size'a orantılı
+
+### 2.3 `ash` (satır 502–522) — gerçek kül
+- Çatlak eşiği `abs(noise - 0.5) < 0.025` çok dar. Genişlet: `abs(noise - 0.5) < 0.06` (yaklaşık %12 coverage)
+- Çatlak çözünürlüğünü yükselt: `int(canvas_h / max(2.0, font_size*0.15))` → `int(canvas_h / max(2.0, font_size*0.35))` (örn. canvas_h=512, font_size=256 için ~35 satır)
+- Noise pattern'i sadece dikey değil, 3 farklı açıda (0°, 60°, 120°) çatlak üret:
+  - `crack_y = Y_st * np.cos(θ) + X_st * np.sin(θ)` (her θ için ayrı noise grid'i)
+  - Üçünü birleştir: `crack_combined = np.minimum.reduce([crack_0, crack_60, crack_120])`
+- Yumuşak halo: outer alpha bleed için `mask.filter(GaussianBlur(font_size*0.03))` ile sönük dış katman
+- Mevcut fading edge mantığı korunsun
+
+### 2.4 `stencil` (satır 524–540) — gerçek ızgara delikleri
+- Mevcut `(Y % period_y < gap_y) & (X % period_x*1.5 > period_x*0.5)` yatay bant üretiyor. **Sil.**
+- Yerine gerçek küçük uniform delikler ızgarası:
+  - Period: `period_x = max(8.0, font_size * 0.18)`, `period_y = max(8.0, font_size * 0.22)`
+  - Gap: `gap_x = max(2.0, font_size * 0.04)`, `gap_y = max(2.0, font_size * 0.05)`
+  - Kare delik kesimi:
+    ```python
+    cut = ((X_st % period_x) < gap_x) | ((Y_st % period_y) < gap_y)
+    stencil_mask = ~cut
+    ```
+  - VEYA yuvarlak delik için mesafe yöntemi: her deliğin merkezinden `sqrt(dx^2 + dy^2) < delik_yarıçapı` → kesilmiş
+- Stencil'in doğası gereği kesilmiş yerler 0 olur (binary OK burada), ama ana maske `mask * stencil_mask` ile alpha compositing yapılsın, böylece harf dışı 0 kalır
+- Sonuç: küçük nokta delikleriyle kaplı harfler (gerçek sprey boya şablonu hissi)
+
+---
+
+## İŞ 3 (P1) — Yeni stillere derinlik/halo katmanı
+Dosya: `render.py`, line 543 koşulu + her yeni stilin kendi bloğu
+
+### Sorun
+```python
+if style not in ["plain", "neon", "fircha", "ink_bleed", "stamp", "parchment", "carved", "chalk", "ember", "ash", "stencil"] and ...
+```
+Tüm yeni stiller bu listenin içinde, dolayısıyla line 544–572'deki `offset/shadow/highlight` (emboss) efekti hiçbirine uygulanmıyor. Oysa bazıları görsel olarak derinliksiz düz kalıyor.
+
+### Yapılacak
+Her yeni stilin **kendi bloğunda** (line 543 koşuluna ekleme yapma, modüler kal) derinlik/halo uygula:
+
+- **`chalk`** (satır ~482 bloğunun sonuna, alpha compositing'ten önce):
+  - Hafif drop shadow: `offset = max(1, int(font_size * 0.02))`, blur = `max(0.5, font_size * 0.008)`, alpha 0.3 siyah
+- **`ember`** (mevcut outer glow zaten var, dokunma)
+- **`ash`** (satır ~502 bloğunun sonuna):
+  - Yumuşak halo: `mask.filter(GaussianBlur(font_size * 0.03))` ile genişletilmiş alpha, renk `(200, 200, 200)`, alpha 0.15
+- **`stencil`** (satır ~524 bloğunun sonuna):
+  - Drop shadow: `offset = max(2, int(font_size * 0.04))`, blur = `max(1, font_size * 0.015)`, alpha 0.4 siyah
+
+Transparent bg için de ayrı dallanma olsun (mevcut diğer stillerdeki gibi `if transparent_bg` ayrımı).
+
+---
+
+## İŞ 4 (P1) — UI: "Lock custom color" toggle
+Dosya: `static/index.html`, satır 432–441 (`resetTextColor` fonksiyonu) ve satır 442–469 (`renderStyle` change listener)
+
+### Sorun
+Kullanıcı custom renk seçtiğinde stil değiştirince `resetTextColor` çağrılıp renk stilin varsayılanına dönüyor. Kullanıcı özel rengini kaybediyor.
+
+### Yapılacak
+1. HTML'e `renderTextColor` kutusunun yanına küçük bir 🔒 toggle button ekle (kilitli/serbest iki durum, default kilitli=false yani mevcut davranış).
+2. JS state: `let lockCustomColor = false;` global.
+3. `renderStyle` change handler'ı güncelle:
+   ```javascript
+   document.getElementById('renderStyle').addEventListener('change', () => {
+     const colorInput = document.getElementById('renderTextColor');
+     if (colorInput && colorInput.dataset.custom === 'true' && !lockCustomColor) {
+       resetTextColor();
+     }
+     // ... mevcut styleSuggestions kodu
+   });
+   ```
+4. Lock toggle tıklanınca:
+   - `lockCustomColor = !lockCustomColor`
+   - Buton ikonu: 🔒 (kilidi) veya 🔓 (serbest)
+   - Buton başlığı (title): "Özel rengi kilitle" / "Özel renk kilidini aç"
+   - `handleRender` payload'unda text_color zaten custom=true ise gönderiliyor, bu davranış değişmesin
+
+---
+
+## Doğrulama Prosedürü
+
+### 1. Regresyon testleri
+```bash
+cd C:\Users\pc\gokturk_studio\pipeline\product
+python test_render.py
+```
+Tüm testler geçmeli (geriye dönük uyumluluk, şeffaf zemin, çok satırlı, yeni stillerin kısa/uzun ölçeklemesi).
+
+### 2. Manuel görsel testler (her stil için ayrı PNG)
+```bash
+python -c "from render import render; \
+img = render('tengri', style='carved', texture='stone.png', size=512); \
+img.save('test_carved.png')"
+```
+Aynısını `chalk`, `ember`, `ash`, `stencil` için de yap. Uzun metin testi: `text='gök türk bodun'` ile her stil için ayrıca bir test.
+
+### 3. Backward compat testi
+```bash
+python -c "from render import render; \
+img = render('tengri', style='stone', size=512); \
+img.save('test_legacy_stone.png')"
+```
+Eski `style="stone"` çağrısı hâlâ çalışmalı (otomatik alias: `style="plain"` + `texture="stone.png"`).
+
+### 4. Tüm test PNG'lerini Antigravity brain'e kopyala
+```bash
+mkdir -p C:\Users\pc\.gemini\antigravity\brain\<yeni_task_id>\
+copy test_carved.png C:\Users\pc\.gemini\antigravity\brain\<yeni_task_id>\
+# ... diğerleri
+```
+
+### 5. walkthrough.md güncelle
+Mevcut `walkthrough.md` varsa güncelle:
+- İŞ 1–4 kısa özeti
+- Yeni test PNG referansları
+- "Ne değişti" bölümü (carved binarizasyon kaldırıldı, 4 stil yeniden yazıldı, lock color eklendi)
+
+### 6. Uvicorn sunucusunu yeniden başlat
+Mevcut task-1459 sonlandır, yeni kodla:
+```bash
+python -m uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+---
+
+## Sınırlamalar (UY)
+
+- **Stamp stiline DOKUNMA** — orijinal haliyle korunacak, ne yeniden yazma ne parametre değişikliği
+- Tüm yeni piksel efektleri **font_size ile orantılı** (Yol B prensibi) — kısa metin (tengri) ve uzun metin (5+ kelime) aynı kalitede çıkmalı, harfler birbirine girmemeli
+- **Geriye dönük uyumluluk**: `style="stone"`, `style="gold"` gibi eski API çağrıları hâlâ çalışmalı
+- **Mühür (stamp) efektinin rotasyon/grunge varyantları** (stamp_var="rot"/"grunge") çalışmaya devam etmeli
+- Yeni eklenen hiçbir şey `STYLES` sözlüğünün yapısını bozmamalı (key'ler, `bg`/`fg`/`effects`/`texture_path`/`blend_mode` aynen korunmalı)
+- `STYLE_TO_TEXTURE_SUGGESTION` tablosu değişmesin
+- Doku seçici dropdown'ındaki stiller korunmalı (carved: stone/gold/wood, vs.)
+
+---
+
+## Teslim Listesi (Rapor İçin)
+
+Antigravity tamamlandığında bana raporla:
+
+1. ✅ `render.py`'de hangi satırlar değişti (özet)
+2. ✅ `static/index.html`'de hangi blok değişti (lock toggle)
+3. ✅ `python test_render.py` çıktısı (tüm testler geçti mi?)
+4. ✅ 4 yeni stil + carved için oluşturulan test PNG dosya yolları
+5. ✅ Backward compat testi geçti mi? (style="stone" eski çağrı)
+6. ✅ walkthrough.md güncellendi mi?
+7. ✅ Uvicorn sunucusu yeni kodla çalışıyor mu (yeni task ID)?
+8. ⚠️ Eğer herhangi bir madde beklenenden sapıyorsa veya trade-off yapıldıysa açıkça belirt
+
+---
+
+## Not
+Kullanıcı şu anda sadece stil düzeltme işine odaklanmak istiyor. Telif/lisans konusu bu prompt kapsamı dışında — Noto OFL lisansı zaten yeniden dağıtıma izin veriyor, ayrıca bu tartışmayı sonra yapacağız. Sadece görsel etki iyileştirmesi.

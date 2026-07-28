@@ -16,3 +16,15 @@ __pycache__/
 
 # Environment files
 .env
+
+# Generated test/proof/build outputs (regenerable, not source)
+outputs/
+pipeline/product/test_*.png
+pipeline/product/test_*.mp4
+pipeline/product/verify_*.png
+pipeline/product/verify_*.mp4
+/test.png
+*.log
+
+# Scratch/debug working files
+scratch/
