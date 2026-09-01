@@ -35,7 +35,7 @@ def main():
     class_meta = {c["id"]: c for c in schema["classes"]}
     
     gokturkce_chars = []
-    for cid, _ in pairs:
+    for cid, _, _ in pairs:
         if cid == ":":
             gokturkce_chars.append("⁚")
         elif cid == "literal_colon":

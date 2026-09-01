@@ -265,24 +265,14 @@ class SpellingEngine:
     # ---------- "modern" mod: kural uygulamadan harf-harf birebir eşleme ----------
 
     def letter_by_letter_sequence(self, latin_text):
-        """
-        "Modern" mod: ünlü düşürme yok, ligatür/hece sıkıştırma yok, ikiz
-        ünsüz tekilleştirme yok — sadece modern harf dönüşümü (F/V/H/J/C/Ğ)
-        uygulanır, ardından her Latin karakter TEK BİR glyph'e eşlenir.
-        Kutuplu ünsüzler için hâlâ en yakın ünlü bağlamı gerekir (nötr bir
-        formu yok), bu tek istisna dışında Aşama 2/3 hiç çalışmaz.
-        Döner: class_id listesi (bkz. letter_by_letter_sequence_with_letters
-        hangi Latin harfin hangi class_id'ye karşılık geldiğini de istiyorsan).
-        """
-        return [cid for cid, _ in self.letter_by_letter_sequence_with_letters(latin_text)]
+        return [cid for cid, _, _ in self.letter_by_letter_sequence_with_letters(latin_text) if cid is not None]
 
     def letter_by_letter_sequence_with_letters(self, latin_text):
-        """Aynı motor, ama her class_id'nin hangi Latin karakterden geldiğini de döner: [(class_id, latin_chunk), ...]."""
         words = latin_text.split()
         out = []
         for wi, w in enumerate(words):
             if wi > 0:
-                out.append((":", None))
+                out.append((":", None, "Kelime ayracı"))
             self._maybe_warn_unverified(w)
             out.extend(self._letter_by_letter_word(w))
         return out
@@ -297,91 +287,71 @@ class SpellingEngine:
         for i, ch in enumerate(word):
             base = self._base_vowel(ch)
             if base is not None:
-                output.append((self.vowel_class_map[base], ch))
+                output.append((self.vowel_class_map[base], ch, "Modern mod: Ünlü yazıldı."))
             elif ch in self.neutral_consonant_map:
-                output.append((self.neutral_consonant_map[ch], ch))
+                output.append((self.neutral_consonant_map[ch], ch, "Modern mod: Nötr ünsüz yazıldı."))
             elif ch in self.polar_consonant_letters:
                 harmony = self._nearest_harmony(word, vowel_positions, i)
-                output.append((self.polar_consonant_map[(ch, harmony)], ch))
+                output.append((self.polar_consonant_map[(ch, harmony)], ch, "Modern mod: Kutuplu ünsüz yazıldı."))
             elif ch == ":":
-                output.append(("literal_colon", ch))
+                output.append(("literal_colon", ch, "Modern mod: İki nokta yazıldı."))
             else:
-                # Alfabede ses karşılığı olmayan her karakter (rakam, noktalama, sembol) olduğu gibi geçirilir
-                output.append((ch, ch))
+                output.append((ch, ch, "Modern mod: Karşılığı olmayan karakter."))
         return output
 
     # ---------- ana motor ("geleneksel" mod) ----------
 
     def expected_sequence(self, latin_text):
-        """
-        latin_text: bir kelime ya da boşlukla ayrılmış birden fazla kelime.
-        Döner: class_id listesi (birden fazla kelime varsa aralarına
-        literal ":" kelime-ayracı işareti eklenir — bu bir model sınıfı
-        değil, yapısal bir işarettir). Hangi Latin harfin hangi class_id'ye
-        karşılık geldiğini de istiyorsan expected_sequence_with_letters kullan.
-        """
-        return [cid for cid, _ in self.expected_sequence_with_letters(latin_text)]
+        return [cid for cid, _, _ in self.expected_sequence_with_letters(latin_text) if cid is not None]
 
     def expected_sequence_with_letters(self, latin_text):
-        """Aynı motor, ama her class_id'nin hangi Latin karakter(ler)den geldiğini de döner: [(class_id, latin_chunk), ...]."""
         words = latin_text.split()
         out = []
         for wi, w in enumerate(words):
             if wi > 0:
-                out.append((":", None))
+                out.append((":", None, "Kelime ayracı eklendi."))
             self._maybe_warn_unverified(w)
             if w in self.exception_dictionary:
-                out.extend((cid, None) for cid in self.exception_dictionary[w])
+                out.extend((cid, None, "İstisna sözlüğünden alındı.") for cid in self.exception_dictionary[w])
             else:
                 out.extend(self._expected_sequence_word(w))
         return out
 
     def _expected_sequence_word(self, raw_word):
-        word = self._normalize(raw_word)
+        word_lower = raw_word.lower()
+        word_lower = self._apply_digraphs(word_lower)
+        
+        output = []
+        word = ""
+        for ch in word_lower:
+            if ch in MODERN_LETTER_MAP:
+                output.append((None, ch, f"Göktürkçede '{ch}' karşılığı olmadığı için '{MODERN_LETTER_MAP[ch]}' olarak değerlendirildi."))
+                word += MODERN_LETTER_MAP[ch]
+            else:
+                word += ch
+                
         n = len(word)
         vowel_positions = [i for i, ch in enumerate(word) if self._base_vowel(ch) is not None]
 
-        output = []
         seen_vowel_class = {}
         i = 0
         while i < n:
-            # --- Aşama 2: hece harfi / ligatür (2 karakterlik look-ahead) ---
             pair = word[i:i + 2]
             if len(pair) == 2 and pair in self.ligature_map:
                 is_word_start = (i == 0)
-
-                # KESİN KURAL (2026-07-21, 9 kelimelik tamga.org kanıtıyla
-                # çözüldü — korkut/koku/koruk, körküt/kökü/körük,
-                # kırkık/kıkı/kırık):
-                #
-                # - ÜNLÜ-ÖNCE kalıplar (ok,uk,ık,ök,ük): kelimenin HER
-                #   YERİNDE (baş/orta/son) ligatür olur, EKSTRA ÜNLÜ ASLA
-                #   eklenmez. Hiçbir konum kısıtı yok.
-                # - ÜNSÜZ-ÖNCE kalıplar (ko,ku,kı): SADECE kelime BAŞINDA
-                #   ligatür + ekstra ünlü. Kelime ORTASI ve SONUNDA ligatür
-                #   YASAK — düz harflere döner (orta: normal ünlü-düşürme
-                #   kuralları; son: kelime-sonu-ünlü-daima-yazılır kuralı
-                #   devreye girer).
-                # - ÜNSÜZ-ÖNCE kö/kü: HİÇBİR pozisyonda (baş dahil)
-                #   doğrudan ligatür olmaz — sadece dolaylı olarak "ök/ük"
-                #   (ünlü-önce) kalıbı yakalanırsa ligatüre girer.
                 if pair in ("ko", "ku", "kı") and not is_word_start:
-                    pass  # başta değil -> düz harflere düş (fall through)
+                    pass
                 elif pair in ("kö", "kü"):
-                    pass  # hiçbir pozisyonda doğrudan ligatür değil -> düş (tamga.org kilitli otorite kuralı)
+                    pass
                 else:
-                    # buraya düşen her şey: ünlü-önce hece (ok,uk,ık,ök,ük —
-                    # konum kısıtsız), kelime ortası/sonundaki kö/kü (𐰜),
-                    # diğer cluster/hece damgaları (nd,nt,ld,lt,nc,nç,iç,çi — konum kısıtsız),
-                    # VE kelime başındaki "ko/ku/kı" (ekstra ünlü burada eklenir).
-                    output.append((self.ligature_map[pair], pair))
+                    output.append((self.ligature_map[pair], pair, f"'{pair}' hecesi için ligatür damgası kullanıldı."))
                     for vch in pair:
                         vb = self._base_vowel(vch)
                         if vb:
                             seen_vowel_class[self.vowel_class_map[vb]] = True
                     if is_word_start and pair in ("ko", "ku", "kı"):
                         extra = "o" if pair == "ko" else ("u" if pair == "ku" else "ı")
-                        output.append((self.vowel_class_map[extra], ""))  # sentetik ek ünlü, girdiden gelmiyor
+                        output.append((self.vowel_class_map[extra], "", f"'{pair}' kelime başı hecesi olduğu için kural gereği ek ünlü yazıldı."))
                         seen_vowel_class[self.vowel_class_map[extra]] = True
                     i += 2
                     continue
@@ -396,48 +366,47 @@ class SpellingEngine:
                 is_word_end = (i == n - 1)
 
                 if is_word_end:
-                    output.append((vclass, ch))  # kelime sonu -> her zaman yaz (en yüksek öncelik)
+                    output.append((vclass, ch, f"'{ch}' ünlüsü kelime sonunda olduğu için yazıldı."))
                     seen_vowel_class[vclass] = True
                 elif base in ("a", "e"):
                     if is_long:
-                        output.append((vclass, ch))  # uzun-ünlü işareti a/e-atlama kuralını ezer
+                        output.append((vclass, ch, f"'{ch}' uzun ünlü olduğu için atlanmadı, yazıldı."))
+                    else:
+                        output.append((None, ch, f"'{ch}' ünlüsü kelime başında/ortasında olduğu için kural gereği atlandı."))
                     seen_vowel_class[vclass] = True
                 elif is_word_start:
-                    output.append((vclass, ch))
+                    output.append((vclass, ch, f"'{ch}' ünlüsü kelime başında olduğu için yazıldı."))
                     seen_vowel_class[vclass] = True
                 else:
                     if seen_vowel_class.get(vclass):
-                        pass  # aynı ünlü sınıfı tekrarı -> atla
+                        output.append((None, ch, f"'{ch}' ünlüsü daha önce geçtiği için kural gereği tekrarlanmadı, atlandı."))
                     elif base in ("ı", "i"):
                         if seen_vowel_class.get(self.vowel_class_map["a"]):
-                            pass  # ilk hece a/e ise sonraki ı/i atlanır
+                            output.append((None, ch, f"'{ch}' ünlüsü ilk hece a/e olduğu için kural gereği atlandı."))
                         else:
-                            output.append((vclass, ch))
+                            output.append((vclass, ch, f"'{ch}' ünlüsü kelime ortasında ilk kez geçtiği için yazıldı."))
                             seen_vowel_class[vclass] = True
                     else:
-                        output.append((vclass, ch))  # o/u, ö/ü kelime ortası ilk kez -> yaz
+                        output.append((vclass, ch, f"'{ch}' ünlüsü kelime ortasında ilk kez geçtiği için yazıldı."))
                         seen_vowel_class[vclass] = True
                 i += 1
                 continue
 
-            # --- ünsüz veya noktalama / sembol geçişi ---
             if ch in self.neutral_consonant_map:
-                output.append((self.neutral_consonant_map[ch], ch))
+                output.append((self.neutral_consonant_map[ch], ch, f"'{ch}' kutupsuz (nötr) ünsüz damgası olarak seçildi."))
             elif ch in self.polar_consonant_letters:
                 harmony = self._nearest_harmony(word, vowel_positions, i)
-                # 'türk' ve 'türküm' (tür- kökenli stem): 'r' sonrası gelen 'k' ünsüzü 'ük' ligatürü (syllable_oek, 𐰜) oluşturur;
-                # 'körküt' gibi kelimelerde ise 2. 'kü' konumunda ligatür oluşmaz (düz k_front kalır — tamga.org otorite kuralı).
+                harmony_tr = "kalın" if harmony == "back" else "ince"
                 if ch == "k" and harmony == "front" and word.startswith("türk"):
-                    output.append(("syllable_oek", ch))
+                    output.append(("syllable_oek", ch, f"'{ch}' ünsüzü 'türk' kökünde istisnai olarak ligatür aldı."))
                     if i + 1 < n and word[i + 1] in ("ü", "ö"):
-                        i += 1  # türetilen 'ü' ünlüsünü tüket
+                        i += 1
                 else:
-                    output.append((self.polar_consonant_map[(ch, harmony)], ch))
+                    output.append((self.polar_consonant_map[(ch, harmony)], ch, f"'{ch}' ünsüzü en yakın ünlüye uyum sağlayacak şekilde {harmony_tr} damga seçildi."))
             elif ch == ":":
-                output.append(("literal_colon", ch))
+                output.append(("literal_colon", ch, "Söz ayracı kullanıldı."))
             else:
-                # Alfabede ses karşılığı olmayan her karakter (rakam, noktalama, sembol) olduğu gibi geçirilir
-                output.append((ch, ch))
+                output.append((ch, ch, f"'{ch}' işareti olduğu gibi korundu."))
             i += 1
 
         return output

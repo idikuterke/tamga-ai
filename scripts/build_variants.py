@@ -13,12 +13,12 @@ SRC_PATH = ROOT_DIR / "inputs" / "NotoSansOldTurkic-Regular.ttf"
 OUT_DIR = ROOT_DIR / "outputs" / "ttf"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-def update_font_metadata(font: TTFont, style_name: str):
+def update_font_metadata(font: TTFont, style_name: str, family_override: str = "Gokturk", prefix_override: str = "Gokturk"):
     """Updates font name table IDs for OFL compliance (Gokturk family name)."""
     name_table = font['name']
-    family_name = "Gokturk"
+    family_name = family_override
     full_name = f"{family_name} {style_name}"
-    ps_name = f"{family_name}-{style_name}"
+    ps_name = f"{prefix_override}-{style_name}"
     
     # Remove any existing records for IDs 1, 2, 3, 4, 6, 16, 17 and re-add clean Unicode records
     records_to_keep = [r for r in name_table.names if r.nameID not in (1, 2, 3, 4, 6, 16, 17)]
@@ -39,6 +39,9 @@ def update_font_metadata(font: TTFont, style_name: str):
 def modify_weight(font: TTFont, delta: float) -> TTFont:
     """True outline weight modification using contour normal vector offsets and skia-pathops simplify."""
     font = copy.deepcopy(font)
+    em = font['head'].unitsPerEm  # Dynamic UPM reading as required
+    upm_scale = em / 1000.0
+    effective_delta = delta * upm_scale
     glyf = font['glyf']
     hmtx = font['hmtx']
     glyph_set = font.getGlyphSet()
@@ -68,7 +71,7 @@ def modify_weight(font: TTFont, delta: float) -> TTFont:
                     unit_normals = normals / norms
                     
                     offset_scale = np.where(c_flags[:, None], 1.0, 0.7)
-                    new_coords[start_idx:end_idx + 1] += unit_normals * delta * offset_scale
+                    new_coords[start_idx:end_idx + 1] += unit_normals * effective_delta * offset_scale
                 start_idx = end_idx + 1
                 
             for i in range(len(g.coordinates)):
@@ -87,7 +90,7 @@ def modify_weight(font: TTFont, delta: float) -> TTFont:
                 pass
                 
             w, lsb = hmtx[gname]
-            hmtx[gname] = (max(0, int(round(w + delta * 1.2))), int(round(lsb)))
+            hmtx[gname] = (max(0, int(round(w + effective_delta * 1.2))), int(round(lsb)))
             
     return font
 

@@ -9,3 +9,5 @@ scipy==1.18.0
 fonttools==4.63.0
 requests==2.34.2
 slowapi==0.1.10
+
+opencv-python-headless

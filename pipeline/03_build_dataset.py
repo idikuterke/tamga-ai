@@ -63,11 +63,28 @@ def main():
 
     train_rows, val_rows = [], []
     for cid, items in by_class.items():
-        items = items[:]
-        rng.shuffle(items)
-        n_val = max(1, int(len(items) * args.val_ratio)) if len(items) > 3 else 0
-        val_rows += items[:n_val]
-        train_rows += items[n_val:]
+        # Kaynak temiz görsel gruplaması
+        from collections import defaultdict
+        clean_groups = defaultdict(list)
+        for r in items:
+            clean_src = r["source_clean_file"]
+            clean_groups[clean_src].append(r)
+
+        clean_src_keys = list(clean_groups.keys())
+        rng.shuffle(clean_src_keys)
+
+        n_val_keys = max(1, int(len(clean_src_keys) * args.val_ratio)) if len(clean_src_keys) > 2 else (1 if len(clean_src_keys) > 1 else 0)
+        val_keys = set(clean_src_keys[:n_val_keys])
+
+        for clean_src, group_items in clean_groups.items():
+            if clean_src in val_keys:
+                val_rows.extend(group_items)
+            else:
+                train_rows.extend(group_items)
+
+    # Karıştır
+    rng.shuffle(train_rows)
+    rng.shuffle(val_rows)
 
     with open(out_dir / "train.jsonl", "w", encoding="utf-8") as f:
         for r in train_rows:
@@ -76,7 +93,7 @@ def main():
         for r in val_rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-    print(f"train: {len(train_rows)}  val: {len(val_rows)}  toplam sınıf: {len(by_class)}")
+    print(f"GRUP BAZLI BÖLME TAMAMLANDI: train: {len(train_rows)}  val: {len(val_rows)}  toplam sınıf: {len(by_class)}")
 
 
 if __name__ == "__main__":

@@ -32,26 +32,30 @@ def proof_single(ttf_path: Path, text: str, out_path: Path, px: int):
 
 def render_side_by_side_comparison():
     """Renders Bold, Regular, Light side-by-side at large point size for visual comparison."""
-    comp_img = Image.new("RGB", (1200, 450), "white")
-    d = ImageDraw.Draw(comp_img)
+    families = [
+        ("Noto-based", "Gokturk-Weight-Comparison.png", [("Bold", "Gokturk-Bold.ttf"), ("Regular", "Gokturk-Regular.ttf"), ("Light", "Gokturk-Light.ttf")]),
+        ("Orkun-based", "Gokturk-Orkun-Weight-Comparison.png", [("Bold", "Gokturk-Orkun-Bold.ttf"), ("Regular", "Gokturk-Orkun-Regular.ttf"), ("Light", "Gokturk-Orkun-Light.ttf")])
+    ]
     
-    styles = [("Bold", "Gokturk-Bold.ttf"), ("Regular", "Gokturk-Regular.ttf"), ("Light", "Gokturk-Light.ttf")]
-    y_offset = 30
-    
-    for label, filename in styles:
-        ttf_path = TTF_DIR / filename
-        if not ttf_path.exists():
-            continue
-        font = ImageFont.truetype(str(ttf_path), 80)
-        label_font = ImageFont.truetype("arial.ttf", 24) if os.path.exists("C:/Windows/Fonts/arial.ttf") else font
+    for family_label, out_name, styles in families:
+        comp_img = Image.new("RGB", (1200, 450), "white")
+        d = ImageDraw.Draw(comp_img)
+        y_offset = 30
         
-        d.text((40, y_offset + 25), f"{label:8s}:", font=label_font, fill="#333333")
-        d.text((220, y_offset), LONG, font=font, fill="black")
-        y_offset += 130
-        
-    out_path = OUTDIR / "Gokturk-Weight-Comparison.png"
-    comp_img.save(str(out_path))
-    print(f"   -> Saved side-by-side comparison: {out_path.name}")
+        for label, filename in styles:
+            ttf_path = TTF_DIR / filename
+            if not ttf_path.exists():
+                continue
+            font = ImageFont.truetype(str(ttf_path), 80)
+            label_font = ImageFont.truetype("arial.ttf", 24) if os.path.exists("C:/Windows/Fonts/arial.ttf") else font
+            
+            d.text((40, y_offset + 25), f"{label:8s}:", font=label_font, fill="#333333")
+            d.text((220, y_offset), LONG, font=font, fill="black")
+            y_offset += 130
+            
+        out_path = OUTDIR / out_name
+        comp_img.save(str(out_path))
+        print(f"   -> Saved side-by-side comparison ({family_label}): {out_path.name}")
 
 def measure_stem_thickness(ttf_path: Path) -> float:
     """Measures average glyph stroke thickness across Old Turkic glyphs."""

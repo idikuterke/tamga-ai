@@ -520,7 +520,7 @@ def translate(request: Request, req: TranslateRequest, api_key: str = Depends(ge
         pairs = spelling_engine.expected_sequence_with_letters(req.text)
 
     sequence = []
-    for cid, latin_chunk in pairs:
+    for cid, latin_chunk, _ in pairs:
         if cid == ":":
             sequence.append(WORD_SEPARATOR)
         elif cid == "literal_colon":

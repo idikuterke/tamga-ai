@@ -153,7 +153,7 @@ def gokturkce_translate(text: str, mode: str = "geleneksel") -> dict:
 
     sequence = []
     gokturkce_chars = []
-    for cid, latin_chunk in pairs:
+    for cid, latin_chunk, _ in pairs:
         if cid == ":":
             sequence.append(WORD_SEPARATOR)
             gokturkce_chars.append("⁚")

@@ -182,17 +182,17 @@ def text_to_gokturk_string(text: str) -> str:
     engine, class_meta = _get_engine()
     pairs = engine.expected_sequence_with_letters(text)
     sequence_glyphs = []
-    for cid, latin_chunk in pairs:
+    for cid, latin_chunk, _ in pairs:
         if cid == ":":
             sequence_glyphs.append("⁚") # U+205A Word Separator
         elif cid == "literal_colon":
             sequence_glyphs.append(":")
-        elif cid in class_meta:
-            glyph = (class_meta[cid].get("glyph_ref") or {}).get("core_orhun")
+        elif cid is not None:
+            glyph = (class_meta.get(cid, {}).get("glyph_ref") or {}).get("core_orhun")
             if glyph:
                 sequence_glyphs.append(glyph)
         else:
-            sequence_glyphs.append(cid)
+            pass
     return "".join(sequence_glyphs)
 
 def create_background(size: int | tuple[int, int], style_cfg: dict, background_color: str | None = None) -> Image.Image:
@@ -712,18 +712,28 @@ def render(
                 gold_layer.paste((100, 80, 0), (0, 0), gold_mask)
                 bg = ImageChops.screen(bg.convert("RGB"), gold_layer).convert("RGBA")
 
-    # 9. NEON (P2 FIX: Original 2-layer cyan glow restored, L3 white core REMOVED)
+    # 9. NEON 
+    # LOCKED - kullanıcı onayı, değiştirme
     fg_color = style_cfg["fg"]
     if style == "neon" or "glow" in effects or "bloom" in effects:
-        glow_mask1 = mask.filter(ImageFilter.GaussianBlur(radius=size*0.02))
+        glow_mask1 = mask.filter(ImageFilter.GaussianBlur(radius=size*0.04))
         glow_layer1 = Image.new("RGBA", (canvas_w, canvas_h), (0,0,0,0))
         glow_layer1.paste(fg_color, (0, 0), glow_mask1)
         bg = Image.alpha_composite(bg, glow_layer1)
         
-        glow_mask2 = mask.filter(ImageFilter.GaussianBlur(radius=size*0.01))
+        glow_mask2 = mask.filter(ImageFilter.GaussianBlur(radius=size*0.02))
         glow_layer2 = Image.new("RGBA", (canvas_w, canvas_h), (0,0,0,0))
         glow_layer2.paste(fg_color, (0, 0), glow_mask2)
         bg = Image.alpha_composite(bg, glow_layer2)
+        
+        glow_mask3 = mask.filter(ImageFilter.GaussianBlur(radius=size*0.01))
+        glow_layer3 = Image.new("RGBA", (canvas_w, canvas_h), (0,0,0,0))
+        glow_layer3.paste((255, 255, 255, 255), (0, 0), glow_mask3)
+        bg = Image.alpha_composite(bg, glow_layer3)
+        
+        core_layer = Image.new("RGBA", (canvas_w, canvas_h), (0,0,0,0))
+        core_layer.paste((255, 255, 255, 255), (0, 0), mask)
+        bg = Image.alpha_composite(bg, core_layer)
 
     # 10. EMBER (P2 FIX: L4 hot white core REMOVED, vibrant orange preserved)
     blend_mode = style_cfg.get("blend_mode", "normal")
