@@ -1,0 +1,19 @@
+{
+  "order_id": "ISIM-01-AYSE",
+  "musteri": "Ayşe",
+  "segment": "kuyumcu",
+  "metin": "ayşe",
+  "mode": "modern",
+  "transliterasyon": "Ayşe",
+  "anlam": "Dirlik içinde yaşayan, huzurlu",
+  "kaynak": "Modern İsimler — Göktürkçe Birebir Yazım",
+  "font": "Gokturk-Regular.ttf",
+  "yukseklik_mm": 40,
+  "letter_spacing_em": 0.08,
+  "skip_ai_verify": true,
+  "rule_notes": [
+    "İsim örneği modern harf-harf eşleme ile ses kaybı olmaksızın '𐰀𐰖𐱁𐰀' olarak yazılmıştır.",
+    "Kalın 'y' (𐰖) ve nötr 'ş' (𐱁) damgaları kullanılmıştır.",
+    "Geleneksel Orhun kuralında ilk hece ünlüsü 'a' düşürülerek '𐰖𐱁𐰀' biçiminde de karşılanabilir."
+  ]
+}

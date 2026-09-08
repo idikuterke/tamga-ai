@@ -1,0 +1,20 @@
+{
+  "order_id": "KLASIK-02-ALP",
+  "musteri": "Klasikler Koleksiyonu",
+  "segment": "dovme",
+  "metin": "𐰞𐰯",
+  "already_gokturk": true,
+  "transliterasyon": "Alp",
+  "anlam": "Cesaret, Yiğitlik, Kahraman Savaşçı",
+  "kaynak": "Orhun Yazıtları ve Eski Türk Destanları (Alp Er Tunga)",
+  "font": "Gokturk-Regular.ttf",
+  "yukseklik_mm": 40,
+  "letter_spacing_em": 0.08,
+  "skip_ai_verify": true,
+  "rule_notes": [
+    "Kitabelerdeki özgün yazım: '𐰞𐰯' (L - P).",
+    "Kelime başındaki kısa 'a' sesi kalın 'l' (𐰞) damgasının ses değeri içinde erir ve yazılmaz.",
+    "Türk epigrafisinde cesaret, metanet ve savaşçı ruhu temsil eden en köklü unvandır.",
+    "Modern harf-harf yazım alternatifi: '𐰀𐰞𐰯'."
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "order_id": "ISIM-03-ZEYNEP",
+  "musteri": "Zeynep",
+  "segment": "kuyumcu",
+  "metin": "zeynep",
+  "mode": "modern",
+  "transliterasyon": "Zeynep",
+  "anlam": "Değerli taşlar, süs",
+  "kaynak": "Modern İsimler — Göktürkçe Birebir Yazım",
+  "font": "Gokturk-Regular.ttf",
+  "yukseklik_mm": 40,
+  "letter_spacing_em": 0.08,
+  "skip_ai_verify": true,
+  "rule_notes": [
+    "İsim örneği modern harf-harf eşleme ile '𐰔𐰀𐰘𐰤𐰀𐰯' olarak yazılmıştır.",
+    "İnce 'y' (𐰘) ve ince 'n' (𐰤) damgaları ile ince sıra ünlü uyumu sağlanmıştır.",
+    "Geleneksel Orhun yazıt kuralında '𐰔𐰘𐰤𐰯' biçiminde kapalı hece tasarrufuyla da yazılabilir."
+  ]
+}

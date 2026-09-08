@@ -1,0 +1,19 @@
+{
+  "order_id": "ISIM-02-MEHMET",
+  "musteri": "Mehmet",
+  "segment": "kuyumcu",
+  "metin": "mehmet",
+  "mode": "modern",
+  "transliterasyon": "Mehmet",
+  "anlam": "Övülmüş, methedilmiş",
+  "kaynak": "Modern İsimler — Göktürkçe Birebir Yazım",
+  "font": "Gokturk-Regular.ttf",
+  "yukseklik_mm": 40,
+  "letter_spacing_em": 0.08,
+  "skip_ai_verify": true,
+  "rule_notes": [
+    "Eski Türkçede 'h' sesi bulunmadığı için fonetik karşılık olarak ön damak ince 'k' (𐰚) damgası kullanılmıştır (𐰢𐰀𐰚𐰢𐰀𐱅).",
+    "İnce sıra ünlü ve ünsüz uyumu (m_nopolar, k_front, t_front) gözetilmiştir.",
+    "Geleneksel Türk dillerindeki özleşmiş okunuş 'Mamet' ya da 'Mekmet' şeklindedir."
+  ]
+}

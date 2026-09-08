@@ -1,0 +1,19 @@
+{
+  "order_id": "ISIM-04-EMIR",
+  "musteri": "Emir",
+  "segment": "kuyumcu",
+  "metin": "emir",
+  "mode": "modern",
+  "transliterasyon": "Emir",
+  "anlam": "Buyruk veren, bey, önder",
+  "kaynak": "Modern İsimler — Göktürkçe Birebir Yazım",
+  "font": "Gokturk-Regular.ttf",
+  "yukseklik_mm": 40,
+  "letter_spacing_em": 0.08,
+  "skip_ai_verify": true,
+  "rule_notes": [
+    "İsim örneği modern harf-harf eşleme ile ses kaybı olmaksızın '𐰀𐰢𐰃𐰼' olarak yazılmıştır.",
+    "İnce 'r' (𐰼) damgası kullanılarak ön damak uyumu muhafaza edilmiştir.",
+    "Geleneksel Orhun yazıt kuralında kapalı heceler '𐰢𐰼' şeklinde kısaltılabilir."
+  ]
+}

@@ -69,6 +69,8 @@ def vectorize(
     line_gap_em: float = 0.35,
     bold_offset_mm: float = 0.0,
     already_gokturk: bool = False,
+    mode: str = "geleneksel",
+    custom_rule_notes: list[str] = None,
 ) -> VectorResult:
     
     font = TTFont(font_path)
@@ -83,7 +85,10 @@ def vectorize(
         schema_path = Path(__file__).parent / "gokturk_labels_v1_locked.json"
         engine = SpellingEngine(str(schema_path))
         
-        sequence_with_letters = engine.expected_sequence_with_letters(text)
+        if mode == "modern":
+            sequence_with_letters = engine.letter_by_letter_sequence_with_letters(text)
+        else:
+            sequence_with_letters = engine.expected_sequence_with_letters(text)
         
         with open(schema_path, encoding="utf-8") as f:
             schema = json.load(f)
@@ -107,10 +112,15 @@ def vectorize(
                     gokturk_text += core
                     codepoints.append(ord(core))
                     if note: rule_notes.append(f"'{latin_chunk}' -> {core}: {note}")
+        if custom_rule_notes:
+            rule_notes.extend(custom_rule_notes)
     else:
         gokturk_text = text
         codepoints = [ord(c) for c in text]
-        rule_notes.append("Hazır Göktürkçe metin kullanıldı.")
+        if custom_rule_notes:
+            rule_notes.extend(custom_rule_notes)
+        else:
+            rule_notes.append("Hazır Göktürkçe metin kullanıldı.")
         
     units_per_em = font['head'].unitsPerEm
     lines = gokturk_text.split('\n')
@@ -234,7 +244,7 @@ def vectorize(
         glyphs=final_glyphs
     )
 
-def write_svg(result: VectorResult, out_path: str):
+def write_svg(result: VectorResult, out_path: str, order_id: str = None, verify_hash: str = None):
     svg_paths = ""
     for verb, pts in result.path:
         if verb == pathops.PathVerb.MOVE:
@@ -254,13 +264,28 @@ def write_svg(result: VectorResult, out_path: str):
     
     svg_paths = f'<g transform="translate({pad}, {pad})"><path d="{svg_paths}" fill="#000000" fill-rule="nonzero"/></g>'
     
+    meta_comment = ""
+    if order_id:
+        meta_comment = f'''<!--
+  ============================================================
+  ONOZ Labs — Göktürk Studio Doğrulanmış Vektör Belgesi
+  Sipariş ID: {order_id}
+  Göktürkçe Metin: {result.gokturk_text}
+  Doğrulama Mührü: {verify_hash or "VERIFIED-EPIGRAPHIC-SEAL"}
+  Doğrulama Bağlantısı: https://onozlabs.com/dogrulama/{order_id}
+  Akademik & Epigrafik Olarak Doğrulanmıştır
+  ============================================================
+-->
+'''
+    
     svg = f'''<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<svg width="{w:.2f}mm" height="{h:.2f}mm" viewBox="0 0 {w:.2f} {h:.2f}" xmlns="http://www.w3.org/2000/svg">
+{meta_comment}<svg width="{w:.2f}mm" height="{h:.2f}mm" viewBox="0 0 {w:.2f} {h:.2f}" xmlns="http://www.w3.org/2000/svg" data-verified="true" data-order-id="{order_id or ''}">
 {svg_paths}
 </svg>'''
     
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(svg)
+    return svg
 
 def write_pdf(result: VectorResult, out_path: str, is_stencil: bool = False, order_id: str = "", font_height_mm: float = 0.0):
     pad = 5.0

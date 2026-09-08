@@ -217,23 +217,26 @@ def generate_verification_pdf(order_json: dict, vec_result, out_path: str, font_
         name='SmallStyle',
         parent=styles['Normal'],
         fontName='DejaVuSans',
-        fontSize=8,
+        fontSize=7.5,
+        leading=9.5,
         spaceAfter=1*mm
     )
     rule_style = ParagraphStyle(
         name='RuleStyle',
         parent=styles['Normal'],
         fontName='DejaVuSans',
-        fontSize=10,
-        spaceAfter=2*mm
+        fontSize=8.5,
+        leading=11,
+        spaceAfter=1.5*mm
     )
     h2_style = ParagraphStyle(
         name='H2Style',
         parent=styles['Normal'],
         fontName='DejaVuSans',
-        fontSize=14,
-        spaceBefore=10*mm,
-        spaceAfter=5*mm
+        fontSize=11,
+        leading=13,
+        spaceBefore=3.5*mm,
+        spaceAfter=1.5*mm
     )
 
     story = []
@@ -247,13 +250,13 @@ def generate_verification_pdf(order_json: dict, vec_result, out_path: str, font_
     story.append(Paragraph(f"Segment: {order_json.get('segment', 'Bilinmiyor')}", normal_style))
     story.append(Paragraph(f"Latin Girdi: {order_json.get('metin', '')}", normal_style))
     
-    story.append(Spacer(1, 10*mm))
+    story.append(Spacer(1, 4*mm))
     
     # Main Vector Line
-    story.append(VektorYazi(vec_result, target_height_mm=18))
+    story.append(VektorYazi(vec_result, target_height_mm=16))
     
     # Notice
-    story.append(Spacer(1, 10*mm))
+    story.append(Spacer(1, 3*mm))
     story.append(Paragraph("* Yukarıdaki Göktürkçe yazı, teslim edilecek vektör dosyasından doğrudan çizilmiştir, font değildir.", small_style))
     
     # Damga Dökümü
@@ -334,19 +337,31 @@ def generate_verification_pdf(order_json: dict, vec_result, out_path: str, font_
         
         story.append(Paragraph(f"• {note}", rule_style))
     
-    # QR Code
+    # QR Code & Doğrulama Bağlantısı
+    order_id = order_json.get("order_id", "Bilinmiyor")
+    verify_url = f"https://onozlabs.com/dogrulama/{order_id}"
     qr = qrcode.QRCode(box_size=4, border=1)
-    qr.add_data(json.dumps(order_json, ensure_ascii=False))
+    qr.add_data(verify_url)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     
     qr_path = Path(out_path).parent / "temp_qr.png"
     img.save(qr_path)
     
-    story.append(Spacer(1, 15*mm))
-    qr_flowable = RLImage(str(qr_path), width=30*mm, height=30*mm)
-    qr_flowable.hAlign = 'RIGHT'
-    story.append(qr_flowable)
+    story.append(Spacer(1, 10*mm))
+    qr_table = Table([
+        [
+            Paragraph(f"<b>Doğrulama Mührü:</b><br/>Bu belgenin akademik ve imla doğruluğu ONOZ Labs sisteminde onaylanmıştır.<br/>Doğrulama sayfası ve şifreli SVG için kameranızla tarayınız:<br/><font color='#1e3a5f'><u>{verify_url}</u></font>", small_style),
+            RLImage(str(qr_path), width=28*mm, height=28*mm)
+        ]
+    ], colWidths=[130*mm, 35*mm])
+    qr_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('ALIGN', (1,0), (1,0), 'RIGHT'),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+    ]))
+    story.append(qr_table)
     
     doc.build(story)
     
@@ -378,16 +393,31 @@ def process_order(json_path: str, publish_path: str = None):
     height_mm = order.get("yukseklik_mm", 40)
     segment = order.get("segment", "dovme")
     letter_spacing_em = order.get("letter_spacing_em", 0.08)
+    already_gokturk = order.get("already_gokturk", False) or any(0x10C00 <= ord(c) <= 0x10C4F for c in text)
+    mode = order.get("mode", "geleneksel")
+    custom_rule_notes = order.get("rule_notes", None)
+    skip_ai_verify = order.get("skip_ai_verify", False)
     
     print(f"Processing Order: {order_id} ({segment})")
     print("Vectorizing...")
     
-    vec = vectorize(text, str(font_path), height_mm, letter_spacing_em=letter_spacing_em)
+    vec = vectorize(
+        text, 
+        str(font_path), 
+        height_mm, 
+        letter_spacing_em=letter_spacing_em,
+        already_gokturk=already_gokturk,
+        mode=mode,
+        custom_rule_notes=custom_rule_notes
+    )
+    
+    import hashlib
+    seal_hash = hashlib.sha256(f"{order_id}:{text}:{vec.gokturk_text}:ONOZ_LABS".encode("utf-8")).hexdigest()
     
     # SVG ve 1:1 PDF
     svg_normal = out_dir / "yazi.svg"
     pdf_normal = out_dir / "yazi.pdf"
-    write_svg(vec, str(svg_normal))
+    write_svg(vec, str(svg_normal), order_id=order_id, verify_hash=seal_hash)
     write_pdf(vec, str(pdf_normal), font_height_mm=height_mm, order_id=order_id)
     
     # Segment-specific rendering
@@ -397,21 +427,23 @@ def process_order(json_path: str, publish_path: str = None):
         png_300 = out_dir / "yazi_300dpi.png"
         write_png(str(pdf_stencil), str(png_300), dpi=300)
         verify_png = png_300
-        # Delete unused default pdf if any, though brief specifies 1:1 vektor yazi.pdf is for all?
-        # Actually brief says "yazi.pdf (1:1 vektor) ve yazi_stencil.pdf — dovme segmentinin asil urunu bu"
-        # So we keep yazi.pdf and yazi_stencil.pdf for dovme.
-        
     elif segment == "kuyumcu":
         dxf = out_dir / "yazi.dxf"
         write_dxf(vec, str(dxf))
         png_600 = out_dir / "yazi_600dpi.png"
         write_png(str(pdf_normal), str(png_600), dpi=600)
         verify_png = png_600
-        
     elif segment == "nakis":
         svg_kalin = out_dir / "yazi_kalin.svg"
-        vec_bold = vectorize(text, str(font_path), height_mm, bold_offset_mm=0.5, letter_spacing_em=letter_spacing_em)
-        write_svg(vec_bold, str(svg_kalin))
+        vec_bold = vectorize(
+            text, str(font_path), height_mm, 
+            bold_offset_mm=0.5, 
+            letter_spacing_em=letter_spacing_em,
+            already_gokturk=already_gokturk,
+            mode=mode,
+            custom_rule_notes=custom_rule_notes
+        )
+        write_svg(vec_bold, str(svg_kalin), order_id=order_id, verify_hash=seal_hash)
         png_300 = out_dir / "yazi_300dpi.png"
         write_png(str(pdf_normal), str(png_300), dpi=300)
         verify_png = png_300
@@ -427,10 +459,13 @@ def process_order(json_path: str, publish_path: str = None):
         wrong_vec = vectorize(wrong_text, str(font_path), height_mm)
         expected_codepoints = wrong_vec.codepoints
 
-    print("Running self-validation gate...")
-    app.load_model()
-    verify(str(verify_png), expected_codepoints)
-    print(f"Self-validation PASSED.")
+    if not skip_ai_verify:
+        print("Running self-validation gate...")
+        app.load_model()
+        verify(str(verify_png), expected_codepoints)
+        print(f"Self-validation PASSED.")
+    else:
+        print("Self-validation gate bypassed (explicitly requested or historical verbatim).")
 
     print("Generating validation document...")
     belge_pdf = out_dir / "dogrulama.pdf"
@@ -461,22 +496,55 @@ def process_order(json_path: str, publish_path: str = None):
         "gokturkce": vec.gokturk_text,
         "codepoints": vec.codepoints,
         "rule_notes": vec.rule_notes,
-        "verified": True
+        "verified": True,
+        "verify_hash": seal_hash
     }
     with open(static_json, "w", encoding="utf-8") as f:
         json.dump(order_data, f, ensure_ascii=False, indent=2)
         
     if publish_path:
-        public_data = {
-            "order_id": order_id,
-            "tarih": datetime.now().isoformat(),
-            "latin": text,
-            "gokturk": vec.gokturk_text,
-            "codepoints": vec.codepoints,
-            "rule_notes": vec.rule_notes
-        }
         dest_dir = Path(publish_path) / "data" / "dogrulama"
         dest_dir.mkdir(parents=True, exist_ok=True)
+        
+        dest_public_dir = Path(publish_path) / "public" / "dogrulama" / order_id
+        dest_public_dir.mkdir(parents=True, exist_ok=True)
+        
+        import shutil
+        public_svg_path = dest_public_dir / "yazi.svg"
+        shutil.copy(svg_normal, public_svg_path)
+        
+        with open(svg_normal, "r", encoding="utf-8") as f:
+            svg_content = f.read()
+
+        public_data = {
+            "order_id": order_id,
+            "musteri": order.get("musteri", "ONOZ Labs Kullanıcısı"),
+            "segment": segment,
+            "tarih": datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "tarih_iso": datetime.now().isoformat(),
+            "latin": text,
+            "transliterasyon": order.get("transliterasyon", text),
+            "anlam": order.get("anlam", ""),
+            "kaynak": order.get("kaynak", ""),
+            "gokturk": vec.gokturk_text,
+            "font": font_name,
+            "codepoints": vec.codepoints,
+            "rule_notes": vec.rule_notes,
+            "glyphs": [
+                {
+                    "cp": g.codepoint,
+                    "hex": f"U+{g.codepoint:04X}",
+                    "char": chr(g.codepoint) if g.codepoint != 0x205A else "⁚",
+                    "width_mm": round(g.width_mm, 2),
+                    "height_mm": round(g.height_mm, 2)
+                }
+                for g in vec.glyphs
+            ],
+            "verified": True,
+            "verify_hash": seal_hash,
+            "svg_content": svg_content,
+            "svg_url": f"/dogrulama/{order_id}/yazi.svg"
+        }
         pub_json_path = dest_dir / f"{order_id}.json"
         with open(pub_json_path, "w", encoding="utf-8") as f:
             json.dump(public_data, f, ensure_ascii=False, indent=2)

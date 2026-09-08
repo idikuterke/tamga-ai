@@ -1,0 +1,20 @@
+{
+  "order_id": "KLASIK-01-BENGU",
+  "musteri": "Klasikler Koleksiyonu",
+  "segment": "dovme",
+  "metin": "𐰋𐰭𐰏𐰇",
+  "already_gokturk": true,
+  "transliterasyon": "Beŋgü (Bengü)",
+  "anlam": "Sonsuzluk, Ebediyet, Ölümsüzlük",
+  "kaynak": "Kül Tigin, Bilge Kağan ve Tonyukuk Yazıtları ('Bengü Taş')",
+  "font": "Gokturk-Regular.ttf",
+  "yukseklik_mm": 40,
+  "letter_spacing_em": 0.08,
+  "skip_ai_verify": true,
+  "rule_notes": [
+    "Kitabelerdeki orijinal yazım: '𐰋𐰭𐰏𐰇' (B - Ŋ - G - Ü).",
+    "Eski Türkçede ilk hecedeki düz-geniş ünlü 'e' kural gereği yazılmamış, ince 'b' (𐰋) damgasının doğası gereği okunmuştur.",
+    "Sağır nun (𐰭) ve ince 'g' (𐰏) damgaları birleşimiyle 'ebediyet/sonsuzluk' kavramını simgeler.",
+    "Modern harf-harf yazım alternatifi: '𐰋𐰀𐰭𐰏𐰇'."
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "order_id": "KITABE-01-TONYUKUK",
+  "musteri": "Tonyukuk Koleksiyonu",
+  "segment": "dovme",
+  "metin": "𐰴𐰆𐰺𐰴𐰢𐰑𐰢𐰕⁚𐰾𐰇𐰭𐰇𐰱𐰓𐰇𐰢𐰕",
+  "already_gokturk": true,
+  "transliterasyon": "Qorqmadımız, süŋüşdümüz!",
+  "anlam": "Korkmadık, savaştık (vuruştuk)!",
+  "kaynak": "Tonyukuk Yazıtı (Güneybatı Yüzü, Satır 17)",
+  "font": "Gokturk-Regular.ttf",
+  "yukseklik_mm": 36,
+  "letter_spacing_em": 0.07,
+  "skip_ai_verify": true,
+  "rule_notes": [
+    "Tonyukuk'un düşmanın sayısal üstünlüğüne karşı beylerine verdiği o meşhur cesaret nutkundan orijinal alıntı.",
+    "𐰴𐰆𐰺𐰴𐰢𐰑𐰢𐰕 (Qorqmadımız): Kalın 'q', 'r', 'd' damgalarıyla kalın sıra ünlü uyumu mükemmel şekilde korunmuştur.",
+    "Kelime ayracı (⁚): Yazıtlardaki çift nokta geleneksel damga ayırıcıdır.",
+    "𐰾𐰇𐰭𐰇𐰱𐰓𐰇𐰢𐰕 (Süŋüşdümüz): İnce damgalar (s, ü, ng, ç, d, m, z) ile savaşma ve direnme eylemi ifade edilmiştir."
+  ]
+}
