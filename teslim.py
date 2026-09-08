@@ -1,6 +1,7 @@
 import sys
 import json
 import argparse
+import re
 from pathlib import Path
 from dataclasses import dataclass
 from PIL import Image
@@ -37,12 +38,22 @@ class VerificationFailed(Exception):
 
 
 def load_font(font_path: str):
-    # Ensure a font for Reportlab is registered
+    # Ensure fonts for Reportlab are registered
     try:
         pdfmetrics.registerFont(TTFont('Gokturk', font_path))
+        noto_path = Path(__file__).parent / "pipeline" / "fonts" / "NotoSansOldTurkic-Regular.ttf"
+        if noto_path.exists():
+            pdfmetrics.registerFont(TTFont('NotoSansOldTurkic', str(noto_path)))
+            noto_bold = Path(__file__).parent / "pipeline" / "fonts" / "NotoSansOldTurkic-Bold.ttf"
+            if noto_bold.exists():
+                pdfmetrics.registerFont(TTFont('NotoSansOldTurkic-Bold', str(noto_bold)))
+                pdfmetrics.registerFontFamily('NotoSansOldTurkic', normal='NotoSansOldTurkic', bold='NotoSansOldTurkic-Bold')
+            else:
+                pdfmetrics.registerFontFamily('NotoSansOldTurkic', normal='NotoSansOldTurkic', bold='NotoSansOldTurkic')
         dejavu_path = Path(__file__).parent / "pipeline" / "fonts" / "DejaVuSans.ttf"
         if dejavu_path.exists():
             pdfmetrics.registerFont(TTFont('DejaVuSans', str(dejavu_path)))
+            pdfmetrics.registerFontFamily('DejaVuSans', normal='DejaVuSans', bold='DejaVuSans', italic='DejaVuSans', boldItalic='DejaVuSans')
     except Exception as e:
         print(f"Failed to register font for PDF generation: {e}")
 
@@ -134,6 +145,19 @@ def verify(png_path: str, expected_codepoints: list[int]):
         raise VerificationFailed(f"Validation failed.\nExpected: {expected_hex}\nGot     : {actual_hex}")
 
 
+def wrap_gokturk_tags(text: str) -> str:
+    """
+    Wrap any contiguous run of Göktürk Unicode characters (U+10C00 - U+10C4F, U+205A)
+    with <font name="NotoSansOldTurkic">...</font> for ReportLab Paragraphs.
+    """
+    if not text:
+        return ""
+    clean_text = re.sub(r'</?font(?: [^>]*)?>', lambda m: '' if ('Gokturk' in m.group(0) or 'NotoSansOldTurkic' in m.group(0)) else m.group(0), str(text))
+    def _repl(m):
+        return f'<font name="NotoSansOldTurkic">{m.group(0)}</font>'
+    return re.sub(r'[\U00010C00-\U00010C4F\u205A]+', _repl, clean_text)
+
+
 class VektorYazi(Flowable):
     def __init__(self, vec_result, target_height_mm):
         Flowable.__init__(self)
@@ -144,6 +168,11 @@ class VektorYazi(Flowable):
         self.height = target_height_mm * mm
         
     def wrap(self, availWidth, availHeight):
+        if availWidth > 0 and self.width > availWidth:
+            shrink = (availWidth - 2*mm) / self.width
+            self.scale *= shrink
+            self.width = self.width * shrink
+            self.height = self.height * shrink
         return (self.width, self.height)
         
     def draw(self):
@@ -195,48 +224,49 @@ def generate_verification_pdf(order_json: dict, vec_result, out_path: str, font_
         raise VerificationFailed("Vektör verisi boş, belge basılamaz.")
 
     doc = SimpleDocTemplate(out_path, pagesize=A4,
-                            rightMargin=20*mm, leftMargin=20*mm,
-                            topMargin=20*mm, bottomMargin=20*mm)
+                            rightMargin=16*mm, leftMargin=16*mm,
+                            topMargin=12*mm, bottomMargin=12*mm)
     
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         name='TitleStyle',
         parent=styles['Normal'],
         fontName='DejaVuSans',
-        fontSize=16,
-        spaceAfter=10*mm
+        fontSize=14,
+        leading=17,
+        spaceAfter=2.5*mm
     )
-    normal_style = ParagraphStyle(
-        name='NormalStyle',
+    info_label_style = ParagraphStyle(
+        name='InfoLabelStyle',
         parent=styles['Normal'],
         fontName='DejaVuSans',
-        fontSize=12,
-        spaceAfter=5*mm
+        fontSize=7.5,
+        leading=10.5
     )
     small_style = ParagraphStyle(
         name='SmallStyle',
         parent=styles['Normal'],
         fontName='DejaVuSans',
-        fontSize=7.5,
-        leading=9.5,
-        spaceAfter=1*mm
+        fontSize=6.8,
+        leading=8.8,
+        spaceAfter=0.5*mm
     )
     rule_style = ParagraphStyle(
         name='RuleStyle',
         parent=styles['Normal'],
         fontName='DejaVuSans',
-        fontSize=8.5,
-        leading=11,
-        spaceAfter=1.5*mm
+        fontSize=7.5,
+        leading=10,
+        spaceAfter=1*mm
     )
     h2_style = ParagraphStyle(
         name='H2Style',
         parent=styles['Normal'],
         fontName='DejaVuSans',
-        fontSize=11,
-        leading=13,
-        spaceBefore=3.5*mm,
-        spaceAfter=1.5*mm
+        fontSize=9.5,
+        leading=12,
+        spaceBefore=2*mm,
+        spaceAfter=1*mm
     )
 
     story = []
@@ -244,38 +274,94 @@ def generate_verification_pdf(order_json: dict, vec_result, out_path: str, font_
     # Title
     story.append(Paragraph("Göktürk Studio - Doğrulama Belgesi", title_style))
     
-    # Order details
-    story.append(Paragraph(f"Tarih: {datetime.now().strftime('%d.%m.%Y %H:%M')}", normal_style))
-    story.append(Paragraph(f"Sipariş ID: {order_json.get('order_id', 'Bilinmiyor')}", normal_style))
-    story.append(Paragraph(f"Segment: {order_json.get('segment', 'Bilinmiyor')}", normal_style))
-    story.append(Paragraph(f"Latin Girdi: {order_json.get('metin', '')}", normal_style))
-    
-    story.append(Spacer(1, 4*mm))
-    
+    # Order details Table
+    order_id = order_json.get('order_id', 'Bilinmiyor')
+    segment = order_json.get('segment', 'Bilinmiyor').capitalize()
+    musteri = order_json.get('musteri', '')
+    kaynak = order_json.get('kaynak', '')
+    date_str = datetime.now().strftime('%d.%m.%Y %H:%M')
+    raw_metin = order_json.get('metin', '')
+    translit = order_json.get('transliterasyon', '')
+    anlam = order_json.get('anlam', '')
+
+    left_lines = [
+        f"<b>Sipariş Kodu:</b> {order_id}",
+        f"<b>Segment / Uygulama:</b> {segment}"
+    ]
+    if musteri:
+        left_lines.append(f"<b>Koleksiyon / Müşteri:</b> {musteri}")
+    if kaynak:
+        left_lines.append(f"<b>Tarihi Kaynak:</b> {kaynak}")
+
+    right_lines = [
+        f"<b>Tarih:</b> {date_str}",
+        f"<b>Metin / İfade:</b> {wrap_gokturk_tags(raw_metin)}"
+    ]
+    if translit and translit != raw_metin:
+        right_lines.append(f"<b>Transliterasyon:</b> {translit}")
+    if anlam:
+        right_lines.append(f"<b>Anlamı:</b> {anlam}")
+
+    header_table = Table([
+        [
+            Paragraph("<br/>".join(left_lines), info_label_style),
+            Paragraph("<br/>".join(right_lines), info_label_style)
+        ]
+    ], colWidths=[88*mm, 90*mm])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8f9fa')),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+        ('TOPPADDING', (0,0), (-1,-1), 1.5*mm),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 1.5*mm),
+        ('LEFTPADDING', (0,0), (-1,-1), 2.5*mm),
+        ('RIGHTPADDING', (0,0), (-1,-1), 2.5*mm),
+    ]))
+    story.append(header_table)
+    story.append(Spacer(1, 2.5*mm))
+
     # Main Vector Line
-    story.append(VektorYazi(vec_result, target_height_mm=16))
+    vec_target_h = 13 if len(vec_result.glyphs) > 15 else 16
+    story.append(VektorYazi(vec_result, target_height_mm=vec_target_h))
     
     # Notice
-    story.append(Spacer(1, 3*mm))
+    story.append(Spacer(1, 1.5*mm))
     story.append(Paragraph("* Yukarıdaki Göktürkçe yazı, teslim edilecek vektör dosyasından doğrudan çizilmiştir, font değildir.", small_style))
     
-    # Damga Dökümü
-    story.append(Paragraph("Damga Dökümü:", h2_style))
-    
-    table_data = []
-    current_row = []
+    # Damga Dökümü / Damga Envanteri
+    is_inventory = len(vec_result.glyphs) > 9
+    if is_inventory:
+        story.append(Paragraph("Damga Envanteri (Kullanılan Damgalar):", h2_style))
+        unique_glyphs = []
+        seen = {}
+        for g in vec_result.glyphs:
+            cp = g.codepoint
+            if cp in seen:
+                seen[cp]["count"] += 1
+            else:
+                entry = {"codepoint": cp, "count": 1}
+                seen[cp] = entry
+                unique_glyphs.append(entry)
+        items_to_render = unique_glyphs
+    else:
+        story.append(Paragraph("Damga Dökümü:", h2_style))
+        items_to_render = [{"codepoint": g.codepoint, "count": 1} for g in vec_result.glyphs]
 
-    # Use Platypus Paragraph for table cells
-    cell_style_gokturk = ParagraphStyle('GokturkCell', parent=styles['Normal'], fontName='Gokturk', fontSize=18, leading=24, alignment=1) # alignment=1 is CENTER
-    cell_style_label = ParagraphStyle('LabelCell', parent=styles['Normal'], fontName='DejaVuSans', fontSize=6, leading=8, alignment=1)
+    cell_style_gokturk = ParagraphStyle(
+        'GokturkCell', parent=styles['Normal'],
+        fontName='NotoSansOldTurkic', fontSize=15, leading=18, alignment=1
+    )
+    cell_style_label = ParagraphStyle(
+        'LabelCell', parent=styles['Normal'],
+        fontName='DejaVuSans', fontSize=5.5, leading=7, alignment=1
+    )
 
-    STAMP_CELL_WIDTH = 18*mm
-    STAMP_CELL_ROW_HEIGHTS = [26, 10]
+    COLS_PER_ROW = 9
+    STAMP_CELL_WIDTH = 19.5*mm
+    STAMP_CELL_ROW_HEIGHTS = [20, 8.5]
 
-    def make_stamp_cell(stamp_markup, label_text):
-        # Nested table: stamp and label are separate rows so their line boxes
-        # can never overlap regardless of font ascent/descent metrics.
-        top = Paragraph(stamp_markup, cell_style_gokturk) if stamp_markup else ""
+    def make_stamp_cell(stamp_char, label_text):
+        top = Paragraph(stamp_char, cell_style_gokturk) if stamp_char else ""
         bottom = Paragraph(label_text, cell_style_label) if label_text else ""
         inner = Table([[top], [bottom]], colWidths=[STAMP_CELL_WIDTH], rowHeights=STAMP_CELL_ROW_HEIGHTS)
         inner.setStyle(TableStyle([
@@ -288,57 +374,66 @@ def generate_verification_pdf(order_json: dict, vec_result, out_path: str, font_
         ]))
         return inner
 
-    for glyph in vec_result.glyphs:
-        cp = glyph.codepoint
+    table_data = []
+    current_row = []
+    for item in items_to_render:
+        cp = item["codepoint"]
+        cnt = item["count"]
         if cp == 0x205A:
-            cell = make_stamp_cell(None, "Kelime ayracı")
+            lbl = f"Ayraç (×{cnt})" if (is_inventory and cnt > 1) else "Kelime ayracı"
+            cell = make_stamp_cell(chr(0x205A), lbl)
         else:
-            cell = make_stamp_cell(f'<font name="Gokturk">&#{cp};</font>', f"U+{cp:04X}")
+            lbl = f"U+{cp:04X} (×{cnt})" if (is_inventory and cnt > 1) else f"U+{cp:04X}"
+            cell = make_stamp_cell(chr(cp), lbl)
 
         current_row.append(cell)
-        if len(current_row) == 8:
+        if len(current_row) == COLS_PER_ROW:
             table_data.append(current_row)
             current_row = []
 
     if current_row:
-        while len(current_row) < 8:
+        while len(current_row) < COLS_PER_ROW:
             current_row.append("")
         table_data.append(current_row)
 
-    t = Table(table_data, colWidths=[STAMP_CELL_WIDTH]*8)
+    t = Table(table_data, colWidths=[STAMP_CELL_WIDTH]*COLS_PER_ROW)
     t.setStyle(TableStyle([
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'TOP'),
-        ('LEFTPADDING', (0,0), (-1,-1), 2),
-        ('RIGHTPADDING', (0,0), (-1,-1), 2),
-        ('TOPPADDING', (0,0), (-1,-1), 4),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('LEFTPADDING', (0,0), (-1,-1), 1),
+        ('RIGHTPADDING', (0,0), (-1,-1), 1),
+        ('TOPPADDING', (0,0), (-1,-1), 1.5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 1.5),
     ]))
     story.append(t)
     
+    if is_inventory:
+        story.append(Spacer(1, 1*mm))
+        story.append(Paragraph(
+            f"* Bu metin toplam {len(vec_result.glyphs)} damga ve {len(items_to_render)} benzersiz damga türünden oluşmaktadır. Sıralı tam akış ve harf analizi için QR kodu okutunuz.",
+            small_style
+        ))
+
     # Sınır Beyanı
     story.append(Paragraph("Sınır Beyanı (Zorunlu):", h2_style))
     beyan_text = (
         "Göktürkçede doğrudan karşılığı bulunmayan harfler ve yabancı özel isimler için "
-        "yapılan seçimler tarihi bir standart değil, belirtilen kurala dayalı bir imla tercihidir."
+        "yapılan seçimler tarihi bir standart değil, belirtilen kurala dayalı bilimsel ve imla tercihidir."
     )
     story.append(Paragraph(beyan_text, rule_style))
     
-    # Kurallar
+    # Kurallar ve Notlar
     story.append(Paragraph("Kurallar ve Notlar:", h2_style))
-    for note in vec_result.rule_notes:
-        if " -> " in note:
-            # Simple heuristic to make characters Gokturk font
-            parts = note.split(" -> ")
-            if len(parts) == 2 and len(parts[1]) > 0:
-                char_part = parts[1].split()[0] # get first word
-                if any(0x10C00 <= ord(c) <= 0x10C4F for c in char_part):
-                    note = note.replace(char_part, f'<font name="Gokturk">{char_part}</font>')
-        
-        story.append(Paragraph(f"• {note}", rule_style))
+    notes = vec_result.rule_notes
+    MAX_NOTES = 4 if len(notes) > 5 else len(notes)
+    for note in notes[:MAX_NOTES]:
+        formatted_note = wrap_gokturk_tags(note)
+        story.append(Paragraph(f"• {formatted_note}", rule_style))
+    if len(notes) > MAX_NOTES:
+        remaining = len(notes) - MAX_NOTES
+        story.append(Paragraph(f"• ... ve diğer {remaining} morfolojik/imla kuralı için QR kodu okutunuz.", rule_style))
     
     # QR Code & Doğrulama Bağlantısı
-    order_id = order_json.get("order_id", "Bilinmiyor")
     verify_url = f"https://onozlabs.com/dogrulama/{order_id}"
     qr = qrcode.QRCode(box_size=4, border=1)
     qr.add_data(verify_url)
@@ -348,18 +443,26 @@ def generate_verification_pdf(order_json: dict, vec_result, out_path: str, font_
     qr_path = Path(out_path).parent / "temp_qr.png"
     img.save(qr_path)
     
-    story.append(Spacer(1, 10*mm))
+    story.append(Spacer(1, 2.5*mm))
     qr_table = Table([
         [
-            Paragraph(f"<b>Doğrulama Mührü:</b><br/>Bu belgenin akademik ve imla doğruluğu ONOZ Labs sisteminde onaylanmıştır.<br/>Doğrulama sayfası ve şifreli SVG için kameranızla tarayınız:<br/><font color='#1e3a5f'><u>{verify_url}</u></font>", small_style),
-            RLImage(str(qr_path), width=28*mm, height=28*mm)
+            Paragraph(
+                f"<b>Doğrulama Mührü ve Dijital İmza:</b><br/>"
+                f"Bu belgenin akademik ve imla doğruluğu ONOZ Labs sisteminde onaylanmıştır.<br/>"
+                f"İmzalı SVG vektörü, detaylı analiz ve sertifika doğrulaması için kameranızla tarayınız:<br/>"
+                f"<font color='#1e3a5f'><u>{verify_url}</u></font>",
+                small_style
+            ),
+            RLImage(str(qr_path), width=24*mm, height=24*mm)
         ]
-    ], colWidths=[130*mm, 35*mm])
+    ], colWidths=[146*mm, 30*mm])
     qr_table.setStyle(TableStyle([
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('ALIGN', (1,0), (1,0), 'RIGHT'),
         ('LEFTPADDING', (0,0), (-1,-1), 0),
         ('RIGHTPADDING', (0,0), (-1,-1), 0),
+        ('TOPPADDING', (0,0), (-1,-1), 0),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
     ]))
     story.append(qr_table)
     
@@ -368,6 +471,7 @@ def generate_verification_pdf(order_json: dict, vec_result, out_path: str, font_
     qr_path.unlink()
     
     return []
+
 
 
 def process_order(json_path: str, publish_path: str = None):
